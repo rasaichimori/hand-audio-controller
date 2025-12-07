@@ -7,8 +7,7 @@ export default defineConfig({
     exclude: ['@mediapipe/tasks-vision']
   },
   server: {
-    port: 5180,
-    host: true
+    port: 5180
   }
 });
 

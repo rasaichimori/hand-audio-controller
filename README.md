@@ -1,4 +1,4 @@
-# Hand Audio Controller
+# Air Mod
 
 A browser-based application that uses real-time hand tracking to control audio parameters. Built with Svelte 5, MediaPipe Hands, and the Audiotool SDK.
 
