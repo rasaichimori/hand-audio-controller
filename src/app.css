@@ -1,5 +1,5 @@
 /**
- * Hand Audio Controller - Global Styles
+ * Air Mod - Global Styles
  * 
  * A dark, cyberpunk-inspired aesthetic with neon accents.
  */
@@ -24,7 +24,6 @@
 	--color-bg-tertiary: #1a1a25;
 	--color-bg-overlay: rgba(10, 10, 15, 0.85);
 
-	--color-cyan: #00ffff;
 	--color-magenta: #ff00ff;
 	--color-yellow: #ffff00;
 	--color-green: #00ff88;
@@ -33,7 +32,6 @@
 
 	--color-text-primary: #e0e0e0;
 	--color-text-secondary: #888899;
-	--color-text-accent: var(--color-cyan);
 
 	/* Typography - Monospace only */
 	--font-display: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
@@ -123,7 +121,6 @@ button {
 
 button:hover {
 	background: var(--color-bg-tertiary);
-	border-color: var(--color-cyan);
 }
 
 button:active {
@@ -136,12 +133,8 @@ button:disabled {
 }
 
 button.primary {
-	background: linear-gradient(135deg, var(--color-cyan), var(--color-magenta));
 	border-color: transparent;
 	color: var(--color-bg-primary);
-}
-
-button.primary:hover {
 }
 
 /* Panels */
@@ -165,7 +158,6 @@ input[type="range"]::-webkit-slider-thumb {
 	width: 20px;
 	height: 20px;
 	border-radius: 50%;
-	background: var(--color-cyan);
 	cursor: pointer;
 }
 
@@ -173,14 +165,8 @@ input[type="range"]::-moz-range-thumb {
 	width: 20px;
 	height: 20px;
 	border-radius: 50%;
-	background: var(--color-cyan);
 	cursor: pointer;
 	border: none;
-}
-
-/* Utility Classes */
-.neon-border {
-	border: 1px solid var(--color-cyan);
 }
 
 /* Animations */
@@ -220,19 +206,13 @@ input[type="range"]::-moz-range-thumb {
 	background: var(--color-bg-tertiary);
 }
 
-::-webkit-scrollbar-thumb:hover {
-	background: var(--color-cyan);
-}
-
 /* Selection */
 ::selection {
-	background: var(--color-cyan);
 	color: var(--color-bg-primary);
 }
 
 /* Focus styles */
 :focus-visible {
-	outline: 2px solid var(--color-cyan);
 	outline-offset: 2px;
 }
 

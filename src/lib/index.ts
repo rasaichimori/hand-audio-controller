@@ -1,24 +1,20 @@
 /**
- * Hand Audio Controller Library
- * 
+ * Air Mod Library
+ *
  * Main entry point for all modules.
  */
 
 // Types
-export * from './types/index.js';
+export * from "./types/index.js";
 
 // Hand Tracking
-export * from './hand-tracking/index.js';
+export * from "./hand-tracking/index.js";
 
 // Graphics
-export * from './graphics/index.js';
+export * from "./graphics/index.js";
 
 // Audio
-export * from './audio/index.js';
+export * from "./audio/index.js";
 
 // Gestures
-export * from './gestures/index.js';
-
-// Utilities
-export * from './utils/index.js';
-
+export * from "./gestures/index.js";

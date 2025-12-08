@@ -114,7 +114,6 @@
       handTracker.start(videoElement, handleHandTracking);
 
       isInitialized = true;
-      console.log("Hand Audio Controller initialized");
     } catch (error) {
       console.error("Initialization failed:", error);
       errorMessage = `Initialization failed: ${error instanceof Error ? error.message : "Unknown error"}`;
@@ -226,11 +225,7 @@
 </script>
 
 <svelte:head>
-  <title>Hand Audio Controller</title>
-  <meta
-    name="description"
-    content="Control audio with hand gestures using computer vision"
-  />
+  <title>Air Mod</title>
 </svelte:head>
 
 <div class="container" bind:this={containerElement}>
@@ -253,16 +248,13 @@
     ></canvas>
   </div>
 
-  <!-- Scan Line Effect -->
-  <div class="scan-line"></div>
-
   <!-- UI Overlay -->
   <div class="ui-overlay">
     <!-- Header -->
     <header class="header">
       <h1 class="title">
         <span class="title-icon">◈</span>
-        Hand Audio Controller
+        Air Mod
       </h1>
       <div class="status">
         {#if isInitialized}
@@ -279,14 +271,10 @@
     {#if !isInitialized}
       <div class="start-screen">
         <div class="start-content">
-          <div class="logo-container">
-            <div class="logo-ring"></div>
-            <div class="logo-icon">✋</div>
-          </div>
           <h2>Gesture-Controlled Audio</h2>
           <p>Use your hands to control sound in real-time</p>
           <button
-            class="start-button primary"
+            class="start-button"
             onclick={initialize}
             disabled={isLoading}
           >
@@ -408,7 +396,6 @@
     width: 100vw;
     height: 100vh;
     overflow: hidden;
-    background: var(--color-bg-primary);
   }
 
   /* Media Wrapper - contains both video and canvas with identical positioning */
@@ -445,25 +432,6 @@
     pointer-events: none;
   }
 
-  /* Scan Line Effect */
-  .scan-line {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 4px;
-    background: linear-gradient(
-      to bottom,
-      transparent,
-      rgba(0, 255, 255, 0.1),
-      transparent
-    );
-    z-index: var(--z-canvas);
-    pointer-events: none;
-    animation: scan-line 4s linear infinite;
-    opacity: 0.3;
-  }
-
   /* UI Overlay */
   .ui-overlay {
     position: absolute;
@@ -495,10 +463,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-  }
-
-  .title-icon {
-    color: var(--color-cyan);
   }
 
   .status {
@@ -540,43 +504,7 @@
     flex-direction: column;
     align-items: center;
     gap: var(--space-lg);
-  }
-
-  .logo-container {
-    position: relative;
-    width: 150px;
-    height: 150px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .logo-ring {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    border: 2px solid var(--color-cyan);
-    border-radius: 50%;
-  }
-
-  .logo-ring::before {
-    content: "";
-    position: absolute;
-    top: -10px;
-    left: -10px;
-    right: -10px;
-    bottom: -10px;
-    border: 1px solid rgba(0, 255, 255, 0.3);
-    border-radius: 50%;
-  }
-
-  .logo-icon {
-    font-size: 4rem;
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  .start-content h2 {
-    color: var(--color-cyan);
+    color: white;
   }
 
   .start-content p {
@@ -611,7 +539,6 @@
   }
 
   .controls-header h3 {
-    color: var(--color-cyan);
     font-size: 0.875rem;
   }
 
@@ -703,7 +630,6 @@
     font-family: var(--font-mono);
     font-size: 2rem;
     font-weight: 700;
-    color: var(--color-cyan);
     line-height: 1;
   }
 
@@ -775,12 +701,6 @@
     overflow: hidden;
   }
 
-  .mapping-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--color-cyan), var(--color-magenta));
-    transition: width 50ms linear;
-  }
-
   .mapping-value {
     width: 40px;
     text-align: right;
@@ -792,7 +712,6 @@
     margin-top: auto;
     padding: var(--space-lg);
     text-align: center;
-    background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent);
     pointer-events: none;
   }
 
