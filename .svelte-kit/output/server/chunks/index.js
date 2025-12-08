@@ -882,6 +882,13 @@ function attributes(attrs, css_hash, classes, styles, flags = 0) {
   }
   return attr_str;
 }
+function stringify(value) {
+  return typeof value === "string" ? value : value == null ? "" : value + "";
+}
+function attr_style(value, directives) {
+  var result = to_style(value, directives);
+  return result ? ` style="${escape_html(result, true)}"` : "";
+}
 export {
   ASYNC as A,
   BOUNDARY_EFFECT as B,
@@ -919,5 +926,7 @@ export {
   is_passive_event as u,
   render as v,
   head as w,
-  attr as x
+  attr_style as x,
+  attr as y,
+  stringify as z
 };

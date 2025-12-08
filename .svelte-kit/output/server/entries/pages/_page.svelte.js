@@ -1,5 +1,6 @@
-import { w as head, x as attr } from "../../chunks/index.js";
+import { w as head, x as attr_style, y as attr, z as stringify } from "../../chunks/index.js";
 import "@mediapipe/tasks-vision";
+import "pixi.js";
 import { e as escape_html } from "../../chunks/context.js";
 var LandmarkIndex = /* @__PURE__ */ ((LandmarkIndex2) => {
   LandmarkIndex2[LandmarkIndex2["WRIST"] = 0] = "WRIST";
@@ -217,13 +218,22 @@ createMapping(
 function _page($$renderer, $$props) {
   $$renderer.component(($$renderer2) => {
     let isLoading = false;
+    let videoWidth = 1280;
+    let videoHeight = 720;
+    let containerWidth = 1280;
+    let containerHeight = 720;
+    const getCanvasScale = () => {
+      const scaleX = containerWidth / videoWidth;
+      const scaleY = containerHeight / videoHeight;
+      return Math.max(scaleX, scaleY);
+    };
     head("1uha8ag", $$renderer2, ($$renderer3) => {
       $$renderer3.title(($$renderer4) => {
         $$renderer4.push(`<title>Hand Audio Controller</title>`);
       });
       $$renderer3.push(`<meta name="description" content="Control audio with hand gestures using computer vision"/>`);
     });
-    $$renderer2.push(`<div class="container svelte-1uha8ag"><video class="video-feed svelte-1uha8ag" autoplay playsinline muted></video> <canvas class="canvas-overlay svelte-1uha8ag"></canvas> <div class="scan-line svelte-1uha8ag"></div> <div class="ui-overlay svelte-1uha8ag"><header class="header svelte-1uha8ag"><h1 class="title svelte-1uha8ag"><span class="title-icon svelte-1uha8ag">◈</span> Hand Audio Controller</h1> <div class="status svelte-1uha8ag">`);
+    $$renderer2.push(`<div class="container svelte-1uha8ag"><div class="media-wrapper svelte-1uha8ag"><video class="video-feed svelte-1uha8ag" autoplay playsinline muted></video> <canvas class="canvas-overlay svelte-1uha8ag"${attr_style(`transform: translate(-50%, -50%) scaleX(-1) scale(${stringify(getCanvasScale())});`)}></canvas></div> <div class="scan-line svelte-1uha8ag"></div> <div class="ui-overlay svelte-1uha8ag"><header class="header svelte-1uha8ag"><h1 class="title svelte-1uha8ag"><span class="title-icon svelte-1uha8ag">◈</span> Hand Audio Controller</h1> <div class="status svelte-1uha8ag">`);
     {
       $$renderer2.push("<!--[!-->");
       $$renderer2.push(`<span class="status-indicator svelte-1uha8ag"></span> <span class="status-text svelte-1uha8ag">Inactive</span>`);

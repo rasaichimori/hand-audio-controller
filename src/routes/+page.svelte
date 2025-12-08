@@ -7,7 +7,6 @@
   import { getStarterPresets } from "$lib/gestures/presets.js";
   import { FPSCounter } from "$lib/utils/performance.js";
   import type { HandTrackingResult, MappingState } from "$lib/types/index.js";
-  import { FINGERTIP_INDICES } from "$lib/types/hand.js";
 
   // State
   let videoElement: HTMLVideoElement;
@@ -95,11 +94,12 @@
       });
       await handTracker.initialize();
 
-      // Initialize overlay renderer
+      // Initialize overlay renderer with PixiJS
       // Note: mirror=false because canvas CSS already handles mirroring
       canvasElement.width = videoWidth;
       canvasElement.height = videoHeight;
-      overlayRenderer = new OverlayRenderer(canvasElement, {}, false);
+      overlayRenderer = new OverlayRenderer({}, false);
+      await overlayRenderer.initialize(canvasElement);
 
       // Initialize gesture mapper with starter presets
       gestureMapper = new GestureMapper();
@@ -214,7 +214,7 @@
       window.removeEventListener("resize", handleResize);
       handTracker?.destroy();
       audioController?.destroy();
-      overlayRenderer?.reset();
+      overlayRenderer?.destroy();
 
       // Stop camera
       if (videoElement?.srcObject) {
@@ -772,7 +772,6 @@
     flex: 1;
     height: 8px;
     background: var(--color-bg-tertiary);
-    border-radius: 4px;
     overflow: hidden;
   }
 

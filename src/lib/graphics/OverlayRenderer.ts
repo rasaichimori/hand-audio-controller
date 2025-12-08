@@ -1,14 +1,14 @@
 /**
  * OverlayRenderer Module
  *
- * Renders animated graphics on top of the video feed.
- * Uses Canvas2D for simplicity and good performance.
+ * Renders animated graphics on top of the video feed using PixiJS.
  * Includes visual effects like:
  * - Landmark circles
  * - Skeleton lines connecting joints
  * - Reactive shapes based on hand state
  */
 
+import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
 import {
   getHandOpenness,
   getPinchDistance,
@@ -25,11 +25,10 @@ import { FINGER_CONNECTIONS, LandmarkIndex } from "../types/hand.js";
  * Visual theme configuration
  */
 export interface VisualTheme {
-  // Colors
-  primaryColor: string;
-  secondaryColor: string;
-  accentColor: string;
-  backgroundColor: string;
+  // Colors (as hex numbers for PixiJS)
+  primaryColor: number;
+  secondaryColor: number;
+  accentColor: number;
 
   // Sizes
   landmarkRadius: number;
@@ -37,50 +36,135 @@ export interface VisualTheme {
 }
 
 /**
- * Default cyberpunk-inspired theme
+ * Default monochrome theme
  */
 export const DEFAULT_THEME: VisualTheme = {
-  primaryColor: "#000000", // Black
-  secondaryColor: "#ffffff", // White
-  accentColor: "#dddddd", // Gray
-  backgroundColor: "rgba(0, 0, 0, 0.1)",
+  primaryColor: 0x000000, // Black
+  secondaryColor: 0xffffff, // White
+  accentColor: 0xdddddd, // Gray
   landmarkRadius: 6,
   lineWidth: 2,
 };
 
 /**
- * Overlay renderer state
- */
-interface RendererState {
-  lastRenderTime: number;
-}
-
-/**
- * Overlay Renderer Class
+ * Overlay Renderer Class using PixiJS
  */
 export class OverlayRenderer {
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
+  private app: Application;
   private theme: VisualTheme;
-  private state: RendererState;
   private mirror: boolean;
+  private initialized: boolean = false;
 
-  constructor(
-    canvas: HTMLCanvasElement,
-    theme: Partial<VisualTheme> = {},
-    mirror: boolean = true
-  ) {
-    this.canvas = canvas;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      throw new Error("Failed to get 2D context from canvas");
-    }
-    this.ctx = ctx;
+  // Graphics containers
+  private handContainer: Container;
+  private effectsContainer: Container;
+
+  // Reusable graphics objects
+  private skeletonGraphics: Graphics;
+  private palmGraphics: Graphics;
+  private landmarkGraphics: Graphics;
+  private pinchGraphics: Graphics;
+  private opennessGraphics: Graphics;
+  private pinchDistanceGraphics: Graphics;
+
+  // Per-hand text containers (for distance and angle display)
+  private pinchInfoContainers: Container[];
+  private distanceTexts: Text[];
+  private angleTexts: Text[];
+  private textBackgrounds: Graphics[];
+
+  constructor(theme: Partial<VisualTheme> = {}, mirror: boolean = true) {
+    this.app = new Application();
     this.theme = { ...DEFAULT_THEME, ...theme };
     this.mirror = mirror;
-    this.state = {
-      lastRenderTime: performance.now(),
-    };
+
+    // Create containers
+    this.handContainer = new Container();
+    this.effectsContainer = new Container();
+
+    // Create reusable graphics objects
+    this.skeletonGraphics = new Graphics();
+    this.palmGraphics = new Graphics();
+    this.landmarkGraphics = new Graphics();
+    this.pinchGraphics = new Graphics();
+    this.opennessGraphics = new Graphics();
+    this.pinchDistanceGraphics = new Graphics();
+
+    // Create text style for labels
+    const textStyle = new TextStyle({
+      fontFamily: "monospace",
+      fontSize: 14,
+      fontWeight: "bold",
+      fill: 0xffffff,
+    });
+
+    // Create per-hand containers and text objects (support up to 2 hands)
+    this.pinchInfoContainers = [];
+    this.distanceTexts = [];
+    this.angleTexts = [];
+    this.textBackgrounds = [];
+
+    for (let i = 0; i < 2; i++) {
+      const container = new Container();
+
+      const background = new Graphics();
+      const distanceText = new Text({ text: "", style: textStyle });
+      const angleText = new Text({ text: "", style: textStyle });
+
+      distanceText.anchor.set(0.5, 0.5);
+      angleText.anchor.set(0.5, 0.5);
+
+      container.addChild(background);
+      container.addChild(distanceText);
+      container.addChild(angleText);
+
+      this.pinchInfoContainers.push(container);
+      this.distanceTexts.push(distanceText);
+      this.angleTexts.push(angleText);
+      this.textBackgrounds.push(background);
+    }
+  }
+
+  /**
+   * Initialize the PixiJS application
+   * Must be called before rendering
+   */
+  async initialize(canvas: HTMLCanvasElement): Promise<void> {
+    await this.app.init({
+      canvas,
+      width: canvas.width,
+      height: canvas.height,
+      backgroundAlpha: 0,
+      antialias: true,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+    });
+
+    // Add containers to stage in order (back to front)
+    this.handContainer.addChild(this.skeletonGraphics);
+    this.handContainer.addChild(this.palmGraphics);
+    this.handContainer.addChild(this.landmarkGraphics);
+
+    this.effectsContainer.addChild(this.opennessGraphics);
+    this.effectsContainer.addChild(this.pinchGraphics);
+    this.effectsContainer.addChild(this.pinchDistanceGraphics);
+
+    // Add pinch info containers for each hand
+    for (const container of this.pinchInfoContainers) {
+      this.effectsContainer.addChild(container);
+    }
+
+    this.app.stage.addChild(this.handContainer);
+    this.app.stage.addChild(this.effectsContainer);
+
+    this.initialized = true;
+  }
+
+  /**
+   * Check if renderer is initialized
+   */
+  get isInitialized(): boolean {
+    return this.initialized;
   }
 
   /**
@@ -91,26 +175,38 @@ export class OverlayRenderer {
   }
 
   /**
-   * Clear the canvas with optional fade effect
+   * Clear all graphics
    */
   clear(): void {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.skeletonGraphics.clear();
+    this.palmGraphics.clear();
+    this.landmarkGraphics.clear();
+    this.pinchGraphics.clear();
+    this.opennessGraphics.clear();
+    this.pinchDistanceGraphics.clear();
+
+    // Clear per-hand text and backgrounds
+    for (let i = 0; i < this.pinchInfoContainers.length; i++) {
+      this.textBackgrounds[i].clear();
+      this.distanceTexts[i].text = "";
+      this.angleTexts[i].text = "";
+      this.pinchInfoContainers[i].visible = false;
+    }
   }
 
   /**
    * Main render function - call this every frame
    */
   render(result: HandTrackingResult): void {
-    const now = performance.now();
-    const deltaTime = now - this.state.lastRenderTime;
-    this.state.lastRenderTime = now;
+    if (!this.initialized) return;
 
     this.clear();
 
     // Render each detected hand
     result.hands.forEach((hand, index) => {
-      this.renderHand(hand, index, now);
+      this.renderHand(hand, index);
     });
+
     // Render reactive effects
     this.renderReactiveEffects(result);
   }
@@ -118,11 +214,7 @@ export class OverlayRenderer {
   /**
    * Render a single hand with all effects
    */
-  private renderHand(
-    hand: HandResult,
-    handIndex: number,
-    timestamp: number
-  ): void {
+  private renderHand(hand: HandResult, handIndex: number): void {
     const { landmarks, handedness } = hand;
     const isLeft = handedness === "Left";
 
@@ -142,38 +234,36 @@ export class OverlayRenderer {
   /**
    * Render skeleton lines connecting joints
    */
-  private renderSkeleton(landmarks: Landmark[], color: string): void {
-    this.ctx.strokeStyle = color;
-    this.ctx.lineWidth = this.theme.lineWidth;
-    this.ctx.lineCap = "round";
-    this.ctx.lineJoin = "round";
+  private renderSkeleton(landmarks: Landmark[], color: number): void {
+    const width = this.app.screen.width;
+    const height = this.app.screen.height;
+
+    this.skeletonGraphics.setStrokeStyle({
+      width: this.theme.lineWidth,
+      color,
+      cap: "round",
+      join: "round",
+    });
 
     // Draw finger connections
     for (const [start, end] of FINGER_CONNECTIONS) {
-      const p1 = landmarkToPixel(
-        landmarks[start],
-        this.canvas.width,
-        this.canvas.height,
-        this.mirror
-      );
-      const p2 = landmarkToPixel(
-        landmarks[end],
-        this.canvas.width,
-        this.canvas.height,
-        this.mirror
-      );
+      const p1 = landmarkToPixel(landmarks[start], width, height, this.mirror);
+      const p2 = landmarkToPixel(landmarks[end], width, height, this.mirror);
 
-      this.ctx.beginPath();
-      this.ctx.moveTo(p1.x, p1.y);
-      this.ctx.lineTo(p2.x, p2.y);
-      this.ctx.stroke();
+      this.skeletonGraphics.moveTo(p1.x, p1.y);
+      this.skeletonGraphics.lineTo(p2.x, p2.y);
     }
+
+    this.skeletonGraphics.stroke();
   }
 
   /**
    * Render palm area with gradient fill
    */
-  private renderPalmArea(landmarks: Landmark[], color: string): void {
+  private renderPalmArea(landmarks: Landmark[], color: number): void {
+    const width = this.app.screen.width;
+    const height = this.app.screen.height;
+
     const palmPoints = [
       landmarks[LandmarkIndex.WRIST],
       landmarks[LandmarkIndex.THUMB_CMC],
@@ -181,57 +271,35 @@ export class OverlayRenderer {
       landmarks[LandmarkIndex.MIDDLE_MCP],
       landmarks[LandmarkIndex.RING_MCP],
       landmarks[LandmarkIndex.PINKY_MCP],
-    ].map((l) =>
-      landmarkToPixel(l, this.canvas.width, this.canvas.height, this.mirror)
-    );
+    ].map((l) => landmarkToPixel(l, width, height, this.mirror));
 
-    // Create gradient from center
-    const centerX =
-      palmPoints.reduce((sum, p) => sum + p.x, 0) / palmPoints.length;
-    const centerY =
-      palmPoints.reduce((sum, p) => sum + p.y, 0) / palmPoints.length;
-
-    const gradient = this.ctx.createRadialGradient(
-      centerX,
-      centerY,
-      0,
-      centerX,
-      centerY,
-      100
-    );
-    gradient.addColorStop(0, this.hexToRgba(color, 0.3));
-    gradient.addColorStop(1, this.hexToRgba(color, 0.0));
-
-    this.ctx.fillStyle = gradient;
-    this.ctx.beginPath();
-    this.ctx.moveTo(palmPoints[0].x, palmPoints[0].y);
+    // Create polygon path
+    this.palmGraphics.moveTo(palmPoints[0].x, palmPoints[0].y);
     for (let i = 1; i < palmPoints.length; i++) {
-      this.ctx.lineTo(palmPoints[i].x, palmPoints[i].y);
+      this.palmGraphics.lineTo(palmPoints[i].x, palmPoints[i].y);
     }
-    this.ctx.closePath();
-    this.ctx.fill();
+    this.palmGraphics.closePath();
+
+    // Fill with semi-transparent color
+    this.palmGraphics.fill({ color, alpha: 0.15 });
   }
 
   /**
    * Render landmark circles
    */
-  private renderLandmarks(landmarks: Landmark[], color: string): void {
+  private renderLandmarks(landmarks: Landmark[], color: number): void {
+    const width = this.app.screen.width;
+    const height = this.app.screen.height;
+
     for (let i = 0; i < landmarks.length; i++) {
-      const pixel = landmarkToPixel(
-        landmarks[i],
-        this.canvas.width,
-        this.canvas.height,
-        this.mirror
-      );
+      const pixel = landmarkToPixel(landmarks[i], width, height, this.mirror);
+      const radius = this.theme.landmarkRadius;
 
-      const radius = this.theme.landmarkRadius * 1;
-
-      // Solid center
-      this.ctx.beginPath();
-      this.ctx.arc(pixel.x, pixel.y, radius, 0, Math.PI * 2);
-      this.ctx.fillStyle = color;
-      this.ctx.fill();
+      // Draw filled circle
+      this.landmarkGraphics.circle(pixel.x, pixel.y, radius);
     }
+
+    this.landmarkGraphics.fill({ color });
   }
 
   /**
@@ -242,9 +310,12 @@ export class OverlayRenderer {
       const openness = getHandOpenness(hand.landmarks);
       const pinchDistance = getPinchDistance(hand.landmarks);
 
-      // Pinch indicator
+      // Always show pinch distance line, label, and angle
+      this.renderPinchDistanceLine(hand, pinchDistance, index);
+
+      // Pinch indicator (circle effect when close)
       if (pinchDistance < 0.08) {
-        this.renderPinchEffect(hand, index);
+        this.renderPinchEffect(hand);
       }
 
       // Hand openness ring
@@ -253,19 +324,147 @@ export class OverlayRenderer {
   }
 
   /**
+   * Render line between thumb and index with distance and angle labels
+   */
+  private renderPinchDistanceLine(
+    hand: HandResult,
+    distance: number,
+    handIndex: number
+  ): void {
+    if (handIndex >= this.pinchInfoContainers.length) return;
+
+    const width = this.app.screen.width;
+    const height = this.app.screen.height;
+
+    // Get fingertip positions
+    const thumbTip = landmarkToPixel(
+      hand.landmarks[LandmarkIndex.THUMB_TIP],
+      width,
+      height,
+      this.mirror
+    );
+    const indexTip = landmarkToPixel(
+      hand.landmarks[LandmarkIndex.INDEX_TIP],
+      width,
+      height,
+      this.mirror
+    );
+
+    // Get joint positions for angle calculation
+    const thumbIP = landmarkToPixel(
+      hand.landmarks[LandmarkIndex.THUMB_IP],
+      width,
+      height,
+      this.mirror
+    );
+    const indexDIP = landmarkToPixel(
+      hand.landmarks[LandmarkIndex.INDEX_DIP],
+      width,
+      height,
+      this.mirror
+    );
+
+    // Draw line between thumb and index
+    this.pinchDistanceGraphics.moveTo(thumbTip.x, thumbTip.y);
+    this.pinchDistanceGraphics.lineTo(indexTip.x, indexTip.y);
+    this.pinchDistanceGraphics.stroke({
+      width: 2,
+      color: this.theme.accentColor,
+      alpha: 0.8,
+    });
+
+    // Calculate angle between thumb line and index line
+    const thumbVec = { x: thumbTip.x - thumbIP.x, y: thumbTip.y - thumbIP.y };
+    const indexVec = { x: indexTip.x - indexDIP.x, y: indexTip.y - indexDIP.y };
+
+    const dot = thumbVec.x * indexVec.x + thumbVec.y * indexVec.y;
+    const thumbMag = Math.sqrt(thumbVec.x ** 2 + thumbVec.y ** 2);
+    const indexMag = Math.sqrt(indexVec.x ** 2 + indexVec.y ** 2);
+
+    let angle = 0;
+    if (thumbMag > 0 && indexMag > 0) {
+      const cos = Math.max(-1, Math.min(1, dot / (thumbMag * indexMag)));
+      angle = Math.acos(cos) * (180 / Math.PI);
+    }
+
+    // Calculate midpoint for distance text
+    const midX = (thumbTip.x + indexTip.x) / 2;
+    const midY = (thumbTip.y + indexTip.y) / 2;
+
+    // Position angle text near thumb
+    const angleOffsetX = thumbTip.x + (thumbTip.x > indexTip.x ? 25 : -25);
+    const angleOffsetY = thumbTip.y - 20;
+
+    // Get references for this hand
+    const container = this.pinchInfoContainers[handIndex];
+    const distanceText = this.distanceTexts[handIndex];
+    const angleText = this.angleTexts[handIndex];
+    const background = this.textBackgrounds[handIndex];
+
+    // Set text content
+    const distanceValue = (distance * 100).toFixed(1);
+    distanceText.text = distanceValue;
+    angleText.text = `${angle.toFixed(0)}°`;
+
+    // Position text elements
+    distanceText.position.set(midX, midY);
+    angleText.position.set(angleOffsetX, angleOffsetY);
+
+    // Flip text horizontally to counteract CSS mirror (make readable)
+    // When mirror=false, CSS scaleX(-1) is used, so we flip text to make it readable
+    if (!this.mirror) {
+      distanceText.scale.x = -1;
+      angleText.scale.x = -1;
+    }
+
+    // Draw black background boxes behind text
+    background.clear();
+
+    // Background for distance text
+    const distPadding = 4;
+    const distWidth = distanceText.width + distPadding * 2;
+    const distHeight = distanceText.height + distPadding * 2;
+    background.rect(
+      midX - distWidth / 2,
+      midY - distHeight / 2,
+      distWidth,
+      distHeight
+    );
+
+    // Background for angle text
+    const anglePadding = 4;
+    const angleWidth = angleText.width + anglePadding * 2;
+    const angleHeight = angleText.height + anglePadding * 2;
+    background.rect(
+      angleOffsetX - angleWidth / 2,
+      angleOffsetY - angleHeight / 2,
+      angleWidth,
+      angleHeight
+    );
+
+    background.fill({ color: 0x000000 });
+
+    // Make container visible
+    container.visible = true;
+  }
+
+  /**
    * Render pinch indicator effect
    */
-  private renderPinchEffect(hand: HandResult, handIndex: number): void {
+  private renderPinchEffect(hand: HandResult): void {
+    const width = this.app.screen.width;
+    const height = this.app.screen.height;
+
     const thumb = landmarkToPixel(
       hand.landmarks[LandmarkIndex.THUMB_TIP],
-      this.canvas.width,
-      this.canvas.height,
+      width,
+      height,
       this.mirror
     );
     const index = landmarkToPixel(
       hand.landmarks[LandmarkIndex.INDEX_TIP],
-      this.canvas.width,
-      this.canvas.height,
+      width,
+      height,
       this.mirror
     );
 
@@ -273,17 +472,16 @@ export class OverlayRenderer {
     const pinchX = (thumb.x + index.x) / 2;
     const pinchY = (thumb.y + index.y) / 2;
 
-    this.ctx.beginPath();
-    this.ctx.arc(pinchX, pinchY, 20, 0, Math.PI * 2);
-    this.ctx.strokeStyle = this.theme.accentColor;
-    this.ctx.lineWidth = 3;
-    this.ctx.stroke();
+    // Outer ring
+    this.pinchGraphics.circle(pinchX, pinchY, 20);
+    this.pinchGraphics.stroke({
+      width: 3,
+      color: this.theme.accentColor,
+    });
 
     // Inner dot
-    this.ctx.beginPath();
-    this.ctx.arc(pinchX, pinchY, 5, 0, Math.PI * 2);
-    this.ctx.fillStyle = this.theme.accentColor;
-    this.ctx.fill();
+    this.pinchGraphics.circle(pinchX, pinchY, 5);
+    this.pinchGraphics.fill({ color: this.theme.accentColor });
   }
 
   /**
@@ -294,11 +492,14 @@ export class OverlayRenderer {
     openness: number,
     handIndex: number
   ): void {
+    const width = this.app.screen.width;
+    const height = this.app.screen.height;
+
     // Get wrist position as ring center
     const wrist = landmarkToPixel(
       hand.landmarks[LandmarkIndex.WRIST],
-      this.canvas.width,
-      this.canvas.height,
+      width,
+      height,
       this.mirror
     );
 
@@ -310,43 +511,39 @@ export class OverlayRenderer {
     // Draw arc based on openness (more open = fuller arc)
     const arcLength = Math.PI * 2 * Math.min(openness * 3, 1);
     const startAngle = -Math.PI / 2 - arcLength / 2;
+    const endAngle = startAngle + arcLength;
 
-    this.ctx.beginPath();
-    this.ctx.arc(wrist.x, wrist.y, radius, startAngle, startAngle + arcLength);
-    this.ctx.strokeStyle = this.hexToRgba(color, 0.4);
-    this.ctx.lineWidth = 4;
-    this.ctx.stroke();
-  }
-
-  /**
-   * Convert hex color to rgba string
-   */
-  private hexToRgba(hex: string, alpha: number): string {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    if (!result) return `rgba(255, 255, 255, ${alpha})`;
-
-    const r = parseInt(result[1], 16);
-    const g = parseInt(result[2], 16);
-    const b = parseInt(result[3], 16);
-
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    // Draw arc
+    this.opennessGraphics.arc(wrist.x, wrist.y, radius, startAngle, endAngle);
+    this.opennessGraphics.stroke({
+      width: 4,
+      color,
+      alpha: 0.4,
+    });
   }
 
   /**
    * Resize canvas to match video dimensions
    */
   resize(width: number, height: number): void {
-    this.canvas.width = width;
-    this.canvas.height = height;
+    if (!this.initialized) return;
+    this.app.renderer.resize(width, height);
   }
 
   /**
    * Clear all state
    */
   reset(): void {
-    this.state = {
-      lastRenderTime: performance.now(),
-    };
     this.clear();
+  }
+
+  /**
+   * Destroy the renderer and clean up resources
+   */
+  destroy(): void {
+    if (this.initialized) {
+      this.app.destroy(true, { children: true });
+      this.initialized = false;
+    }
   }
 }

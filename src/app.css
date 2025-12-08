@@ -115,7 +115,6 @@ button {
 	text-transform: uppercase;
 	cursor: pointer;
 	border: var(--border-width) solid var(--border-color);
-	border-radius: var(--border-radius-md);
 	background: var(--color-bg-secondary);
 	color: var(--color-text-primary);
 	padding: var(--space-sm) var(--space-md);
@@ -149,7 +148,6 @@ button.primary:hover {
 .panel {
 	background: var(--color-bg-overlay);
 	border: var(--border-width) solid var(--border-color);
-	border-radius: var(--border-radius-lg);
 	padding: var(--space-lg);
 	backdrop-filter: blur(10px);
 }
@@ -159,7 +157,6 @@ input[type="range"] {
 	appearance: none;
 	background: var(--color-bg-tertiary);
 	height: 8px;
-	border-radius: 4px;
 	outline: none;
 }
 
@@ -221,7 +218,6 @@ input[type="range"]::-moz-range-thumb {
 
 ::-webkit-scrollbar-thumb {
 	background: var(--color-bg-tertiary);
-	border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
