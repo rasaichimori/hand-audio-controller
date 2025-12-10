@@ -119,6 +119,49 @@ export const getHandRotation = (landmarks: Landmark[]): number => {
 };
 
 /**
+ * Calculate hand tilt angle (rotation around horizontal axis)
+ * Returns normalized value 0-1 where:
+ * - 0 = hand pointing down
+ * - 0.5 = hand horizontal  
+ * - 1 = hand pointing up
+ */
+export const getHandTilt = (landmarks: Landmark[]): number => {
+	const wrist = landmarks[LandmarkIndex.WRIST];
+	const middleTip = landmarks[LandmarkIndex.MIDDLE_TIP];
+
+	// Calculate vertical angle from wrist to middle fingertip
+	const dx = middleTip.x - wrist.x;
+	const dy = middleTip.y - wrist.y;
+
+	// Get angle in radians (-PI to PI)
+	const angle = Math.atan2(dy, dx);
+
+	// Normalize to 0-1 range
+	// -PI/2 (pointing up) -> 1
+	// 0 (pointing right/left) -> 0.5  
+	// PI/2 (pointing down) -> 0
+	const normalized = 0.5 - (angle / Math.PI);
+	
+	return Math.max(0, Math.min(1, normalized));
+};
+
+/**
+ * Calculate hand rotation normalized to 0-1
+ * - 0 = hand rotated fully left/counterclockwise
+ * - 0.5 = hand neutral/vertical
+ * - 1 = hand rotated fully right/clockwise
+ */
+export const getHandRotationNormalized = (landmarks: Landmark[]): number => {
+	const angle = getHandRotation(landmarks);
+	
+	// Normalize from [-PI, PI] to [0, 1]
+	// We shift so that vertical hand (pointing up, angle ~= -PI/2) maps to ~0.5
+	const normalized = (angle + Math.PI) / (2 * Math.PI);
+	
+	return Math.max(0, Math.min(1, normalized));
+};
+
+/**
  * Calculate palm facing direction (0 = facing away, 1 = facing camera)
  * Based on Z-depth difference between palm and back of hand
  */

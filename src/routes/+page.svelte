@@ -2,11 +2,13 @@
   import { onMount } from "svelte";
   import { HandTracker } from "$lib/hand-tracking/HandTracker.js";
   import { OverlayRenderer } from "$lib/graphics/OverlayRenderer.js";
-  import { AudioController } from "$lib/audio/AudioController.js";
-  import { GestureMapper } from "$lib/gestures/GestureMapper.js";
-  import { getStarterPresets } from "$lib/gestures/presets.js";
+  import {
+    AudiotoolController,
+    type AudiotoolDevice,
+  } from "$lib/audio/AudiotoolController.js";
   import { FPSCounter } from "$lib/utils/performance.js";
-  import type { HandTrackingResult, MappingState } from "$lib/types/index.js";
+  import { getHandTilt } from "$lib/hand-tracking/landmarkUtils.js";
+  import type { HandTrackingResult } from "$lib/types/index.js";
 
   // State
   let videoElement: HTMLVideoElement;
@@ -18,9 +20,8 @@
   let overlayRenderer: OverlayRenderer | null = null;
   let fpsCounter: FPSCounter | null = null;
 
-  // These need to be reactive for UI updates
-  let audioController = $state<AudioController | null>(null);
-  let gestureMapper = $state<GestureMapper | null>(null);
+  // Audiotool controller (reactive for UI updates)
+  let audiotoolController = $state<AudiotoolController | null>(null);
 
   // UI State
   let isInitialized = $state(false);
@@ -28,17 +29,40 @@
   let errorMessage = $state("");
   let fps = $state(0);
   let showDebug = $state(false);
-  let audioEnabled = $state(false);
   let handsDetected = $state(0);
-  let mappingStates = $state<Map<string, MappingState>>(new Map());
+  let currentHandAngle = $state(0.5);
+  let showConnectionPanel = $state(true);
+
+  // Audiotool connection state
+  let patInput = $state("");
+  let projectUrlInput = $state("");
+  let connectionState = $state<
+    "disconnected" | "connecting" | "connected" | "error"
+  >("disconnected");
+  let connectionError = $state("");
+
+  // Device selection
+  let devices = $state<AudiotoolDevice[]>([]);
+  let selectedDeviceId = $state<string | null>(null);
+  let selectedParameterName = $state<string | null>(null);
 
   // Camera dimensions
   let videoWidth = $state(1280);
   let videoHeight = $state(720);
 
-  // Container dimensions for scaling canvas (initialized in onMount for SSR safety)
+  // Container dimensions for scaling canvas
   let containerWidth = $state(1280);
   let containerHeight = $state(720);
+
+  /**
+   * Get parameters for selected device
+   */
+  const getSelectedDeviceParameters = (): string[] => {
+    if (!selectedDeviceId) return [];
+    const device = devices.find((d) => d.id === selectedDeviceId);
+    if (!device) return [];
+    return Array.from(device.parameters.keys());
+  };
 
   /**
    * Initialize webcam access
@@ -57,7 +81,6 @@
       videoElement.srcObject = stream;
       await videoElement.play();
 
-      // Get actual dimensions
       videoWidth = videoElement.videoWidth;
       videoHeight = videoElement.videoHeight;
 
@@ -95,17 +118,23 @@
       await handTracker.initialize();
 
       // Initialize overlay renderer with PixiJS
-      // Note: mirror=false because canvas CSS already handles mirroring
       canvasElement.width = videoWidth;
       canvasElement.height = videoHeight;
       overlayRenderer = new OverlayRenderer({}, false);
       await overlayRenderer.initialize(canvasElement);
 
-      // Initialize gesture mapper with starter presets
-      gestureMapper = new GestureMapper();
-      for (const preset of getStarterPresets()) {
-        gestureMapper.addMapping(preset);
-      }
+      // Initialize Audiotool controller
+      audiotoolController = new AudiotoolController();
+      audiotoolController.setStateChangeCallback(() => {
+        // Update reactive state from controller
+        connectionState =
+          audiotoolController?.connectionState ?? "disconnected";
+        connectionError = audiotoolController?.error ?? "";
+        devices = audiotoolController?.devices ?? [];
+        selectedDeviceId = audiotoolController?.selectedDeviceId ?? null;
+        selectedParameterName =
+          audiotoolController?.selectedParameterName ?? null;
+      });
 
       // Initialize FPS counter
       fpsCounter = new FPSCounter(500);
@@ -123,38 +152,59 @@
   };
 
   /**
-   * Initialize audio (requires user interaction)
+   * Connect to Audiotool project
    */
-  const initAudio = async () => {
-    if (audioController?.initialized) return;
+  const connectToAudiotool = async () => {
+    if (!audiotoolController) return;
 
-    try {
-      audioController = new AudioController({
-        bpm: 120,
-        masterVolume: 0.8,
-      });
-      await audioController.initialize();
+    audiotoolController.setPAT(patInput);
+    audiotoolController.setProjectUrl(projectUrlInput);
+    await audiotoolController.connect();
 
-      // Connect gesture mapper to audio controller
-      if (gestureMapper) {
-        gestureMapper.setParameterCallback((deviceId, paramName, value) => {
-          audioController?.setParameter(deviceId, paramName, value);
-        });
-      }
+    if (audiotoolController.connected) {
+      showConnectionPanel = false;
+    }
+  };
 
-      audioEnabled = true;
-      console.log("Audio initialized");
-    } catch (error) {
-      console.error("Audio initialization failed:", error);
-      errorMessage = "Audio initialization failed. Some features may not work.";
+  /**
+   * Disconnect from Audiotool
+   */
+  const disconnectFromAudiotool = async () => {
+    if (!audiotoolController) return;
+    await audiotoolController.disconnect();
+    showConnectionPanel = true;
+  };
+
+  /**
+   * Handle device selection
+   */
+  const handleDeviceSelect = (event: Event) => {
+    const target = event.target as HTMLSelectElement;
+    const deviceId = target.value;
+    if (deviceId && audiotoolController) {
+      audiotoolController.selectDevice(deviceId);
+      selectedDeviceId = deviceId;
+      selectedParameterName = null;
+    }
+  };
+
+  /**
+   * Handle parameter selection
+   */
+  const handleParameterSelect = (event: Event) => {
+    const target = event.target as HTMLSelectElement;
+    const paramName = target.value;
+    if (paramName && audiotoolController) {
+      audiotoolController.selectParameter(paramName);
+      selectedParameterName = paramName;
     }
   };
 
   /**
    * Handle hand tracking results each frame
    */
-  const handleHandTracking = (result: HandTrackingResult) => {
-    if (!overlayRenderer || !gestureMapper) return;
+  const handleHandTracking = async (result: HandTrackingResult) => {
+    if (!overlayRenderer) return;
 
     // Update FPS
     if (fpsCounter) {
@@ -164,22 +214,24 @@
     // Update hands detected count
     handsDetected = result.hands.length;
 
-    // Process gesture mappings
-    const states = gestureMapper.process(result);
-    mappingStates = states;
+    // Process hand angle and send to Audiotool
+    if (result.hands.length > 0) {
+      const hand = result.hands[0];
+      const tilt = getHandTilt(hand.landmarks);
+      currentHandAngle = tilt;
+
+      // Send to Audiotool if connected and parameter selected
+      if (
+        audiotoolController?.connected &&
+        selectedDeviceId &&
+        selectedParameterName
+      ) {
+        await audiotoolController.setSelectedParameter(tilt);
+      }
+    }
 
     // Render overlay graphics
     overlayRenderer.render(result);
-  };
-
-  /**
-   * Toggle audio playback
-   */
-  const toggleAudio = async () => {
-    if (!audioController) {
-      await initAudio();
-    }
-    await audioController?.togglePlayback();
   };
 
   /**
@@ -197,7 +249,6 @@
     if (!videoWidth || !videoHeight) return 1;
     const scaleX = containerWidth / videoWidth;
     const scaleY = containerHeight / videoHeight;
-    // Use the larger scale to achieve "cover" behavior
     return Math.max(scaleX, scaleY);
   };
 
@@ -205,17 +256,15 @@
    * Cleanup on unmount
    */
   onMount(() => {
-    // Add resize listener
     window.addEventListener("resize", handleResize);
     handleResize();
 
     return () => {
       window.removeEventListener("resize", handleResize);
       handTracker?.destroy();
-      audioController?.destroy();
+      audiotoolController?.destroy();
       overlayRenderer?.destroy();
 
-      // Stop camera
       if (videoElement?.srcObject) {
         const tracks = (videoElement.srcObject as MediaStream).getTracks();
         tracks.forEach((track) => track.stop());
@@ -225,13 +274,12 @@
 </script>
 
 <svelte:head>
-  <title>Air Mod</title>
+  <title>Air Mod – Audiotool Gesture Control</title>
 </svelte:head>
 
 <div class="container" bind:this={containerElement}>
-  <!-- Video and Canvas Wrapper - maintains aspect ratio alignment -->
+  <!-- Video and Canvas Wrapper -->
   <div class="media-wrapper">
-    <!-- Video Background -->
     <video
       bind:this={videoElement}
       class="video-feed"
@@ -240,7 +288,6 @@
       muted
     ></video>
 
-    <!-- Canvas Overlay - scaled to match video's cover behavior -->
     <canvas
       bind:this={canvasElement}
       class="canvas-overlay"
@@ -257,12 +304,15 @@
         Air Mod
       </h1>
       <div class="status">
-        {#if isInitialized}
-          <span class="status-indicator active"></span>
-          <span class="status-text">Active</span>
+        {#if connectionState === "connected"}
+          <span class="status-indicator connected"></span>
+          <span class="status-text">Connected</span>
+        {:else if connectionState === "connecting"}
+          <span class="status-indicator connecting"></span>
+          <span class="status-text">Connecting...</span>
         {:else}
           <span class="status-indicator"></span>
-          <span class="status-text">Inactive</span>
+          <span class="status-text">Disconnected</span>
         {/if}
       </div>
     </header>
@@ -272,7 +322,7 @@
       <div class="start-screen">
         <div class="start-content">
           <h2>Gesture-Controlled Audio</h2>
-          <p>Use your hands to control sound in real-time</p>
+          <p>Control Audiotool devices with your hands</p>
           <button
             class="start-button"
             onclick={initialize}
@@ -287,63 +337,133 @@
       </div>
     {/if}
 
-    <!-- Controls Panel (shown when initialized) -->
-    {#if isInitialized}
-      <div class="controls-panel panel">
-        <div class="controls-header">
-          <h3>Controls</h3>
-          <button class="icon-button" onclick={() => (showDebug = !showDebug)}>
-            {showDebug ? "◉" : "○"}
+    <!-- Connection Panel -->
+    {#if isInitialized && showConnectionPanel}
+      <div class="connection-panel panel">
+        <h3>Connect to Audiotool</h3>
+
+        <div class="form-group">
+          <label for="pat-input">Personal Access Token</label>
+          <input
+            id="pat-input"
+            type="password"
+            bind:value={patInput}
+            placeholder="at_pat_..."
+            class="text-input"
+          />
+          <a
+            href="https://rpc.audiotool.com/dev/"
+            target="_blank"
+            rel="noopener"
+            class="help-link"
+          >
+            Get your PAT →
+          </a>
+        </div>
+
+        <div class="form-group">
+          <label for="project-url">Project URL</label>
+          <input
+            id="project-url"
+            type="text"
+            bind:value={projectUrlInput}
+            placeholder="https://beta.audiotool.com/studio?project=..."
+            class="text-input"
+          />
+        </div>
+
+        {#if connectionError}
+          <p class="error">{connectionError}</p>
+        {/if}
+
+        <button
+          class="connect-button"
+          onclick={connectToAudiotool}
+          disabled={connectionState === "connecting" ||
+            !patInput ||
+            !projectUrlInput}
+        >
+          {connectionState === "connecting" ? "Connecting..." : "Connect"}
+        </button>
+      </div>
+    {/if}
+
+    <!-- Device Control Panel (shown when connected) -->
+    {#if isInitialized && connectionState === "connected"}
+      <div class="control-panel panel">
+        <div class="panel-header">
+          <h3>Device Control</h3>
+          <button
+            class="icon-button disconnect"
+            onclick={disconnectFromAudiotool}
+          >
+            ✕
           </button>
         </div>
 
-        <div class="controls-content">
-          <button
-            class="control-button"
-            class:active={audioEnabled}
-            onclick={initAudio}
+        <div class="form-group">
+          <label for="device-select">Device</label>
+          <select
+            id="device-select"
+            class="select-input"
+            onchange={handleDeviceSelect}
+            value={selectedDeviceId ?? ""}
           >
-            <span class="button-icon">{audioEnabled ? "🔊" : "🔇"}</span>
-            <span class="button-label"
-              >{audioEnabled ? "Audio On" : "Enable Audio"}</span
-            >
-          </button>
-
-          <button
-            class="control-button"
-            onclick={toggleAudio}
-            disabled={!audioEnabled}
-          >
-            <span class="button-icon"
-              >{audioController?.playing ? "⏸" : "▶"}</span
-            >
-            <span class="button-label"
-              >{audioController?.playing ? "Pause" : "Play"}</span
-            >
-          </button>
+            <option value="" disabled>Select a device...</option>
+            {#each devices as device}
+              <option value={device.id}>{device.name}</option>
+            {/each}
+          </select>
         </div>
 
-        <!-- Gesture Info -->
-        <div class="gesture-info">
-          <h4>Active Gestures</h4>
-          <ul class="gesture-list">
-            <li>
-              <span class="gesture-name">Pinch</span>
-              <span class="gesture-desc">→ Filter Cutoff</span>
-            </li>
-            <li>
-              <span class="gesture-name">Hand Height</span>
-              <span class="gesture-desc">→ Volume</span>
-            </li>
-            <li>
-              <span class="gesture-name">Hand Depth</span>
-              <span class="gesture-desc">→ Delay</span>
-            </li>
-          </ul>
+        {#if selectedDeviceId}
+          <div class="form-group">
+            <label for="param-select">Parameter</label>
+            <select
+              id="param-select"
+              class="select-input"
+              onchange={handleParameterSelect}
+              value={selectedParameterName ?? ""}
+            >
+              <option value="" disabled>Select a parameter...</option>
+              {#each getSelectedDeviceParameters() as param}
+                <option value={param}>{param}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+
+        {#if selectedParameterName}
+          <div class="control-active">
+            <div class="control-info">
+              <span class="control-label"
+                >Hand Tilt → {selectedParameterName}</span
+              >
+              <span class="control-value"
+                >{(currentHandAngle * 100).toFixed(0)}%</span
+              >
+            </div>
+            <div class="control-bar">
+              <div
+                class="control-fill"
+                style="width: {currentHandAngle * 100}%"
+              ></div>
+              <div
+                class="control-indicator"
+                style="left: {currentHandAngle * 100}%"
+              ></div>
+            </div>
+          </div>
+        {/if}
+
+        <div class="gesture-hint">
+          <p>Tilt your hand up/down to control the parameter</p>
         </div>
       </div>
+    {/if}
 
-      <!-- Stats Panel -->
+    <!-- Stats Panel -->
+    {#if isInitialized}
       <div class="stats-panel panel">
         <div class="stat">
           <span class="stat-value">{fps}</span>
@@ -354,38 +474,37 @@
           <span class="stat-label">Hands</span>
         </div>
       </div>
+    {/if}
 
-      <!-- Debug Panel -->
-      {#if showDebug}
-        <div class="debug-panel panel">
-          <h3>Debug Info</h3>
-          <div class="debug-content">
-            <p>Video: {videoWidth}×{videoHeight}</p>
-            <p>Audio: {audioEnabled ? "Enabled" : "Disabled"}</p>
-            <p>Mappings: {gestureMapper?.getMappings().length ?? 0}</p>
-            <hr />
-            <h4>Mapping States</h4>
-            {#each Array.from(mappingStates.entries()) as [id, state]}
-              <div class="mapping-state">
-                <span class="mapping-id">{id}</span>
-                <div class="mapping-bar">
-                  <div
-                    class="mapping-fill"
-                    style="width: {Math.min(100, state.outputValue * 100)}%"
-                  ></div>
-                </div>
-                <span class="mapping-value">{state.outputValue.toFixed(2)}</span
-                >
-              </div>
-            {/each}
-          </div>
+    <!-- Debug Panel -->
+    {#if isInitialized && showDebug}
+      <div class="debug-panel panel">
+        <h3>Debug Info</h3>
+        <div class="debug-content">
+          <p>Video: {videoWidth}×{videoHeight}</p>
+          <p>Connection: {connectionState}</p>
+          <p>Devices: {devices.length}</p>
+          <p>Selected: {selectedDeviceId ?? "none"}</p>
+          <p>Parameter: {selectedParameterName ?? "none"}</p>
+          <p>Hand Angle: {currentHandAngle.toFixed(3)}</p>
         </div>
-      {/if}
+      </div>
+    {/if}
+
+    <!-- Debug Toggle -->
+    {#if isInitialized}
+      <button
+        class="debug-toggle"
+        onclick={() => (showDebug = !showDebug)}
+        aria-label="Toggle debug panel"
+      >
+        {showDebug ? "◉" : "○"}
+      </button>
     {/if}
 
     <!-- Footer -->
     <footer class="footer">
-      <p>Move your hands in front of the camera to control audio</p>
+      <p>Tilt your hand to control Audiotool parameters</p>
     </footer>
   </div>
 </div>
@@ -398,7 +517,6 @@
     overflow: hidden;
   }
 
-  /* Media Wrapper - contains both video and canvas with identical positioning */
   .media-wrapper {
     position: absolute;
     top: 0;
@@ -408,7 +526,6 @@
     overflow: hidden;
   }
 
-  /* Video Feed */
   .video-feed {
     position: absolute;
     top: 50%;
@@ -417,22 +534,19 @@
     min-height: 100%;
     width: auto;
     height: auto;
-    transform: translate(-50%, -50%) scaleX(-1); /* Center and mirror */
+    transform: translate(-50%, -50%) scaleX(-1);
     z-index: var(--z-video);
     filter: brightness(0.7) contrast(1.1);
   }
 
-  /* Canvas Overlay - scaled and positioned to match video exactly */
   .canvas-overlay {
     position: absolute;
     top: 50%;
     left: 50%;
-    /* Transform is set via inline style with calculated scale */
     z-index: var(--z-canvas);
     pointer-events: none;
   }
 
-  /* UI Overlay */
   .ui-overlay {
     position: absolute;
     top: 0;
@@ -465,6 +579,10 @@
     gap: var(--space-sm);
   }
 
+  .title-icon {
+    color: var(--color-cyan);
+  }
+
   .status {
     display: flex;
     align-items: center;
@@ -479,8 +597,24 @@
     transition: all var(--transition-normal);
   }
 
-  .status-indicator.active {
+  .status-indicator.connected {
     background: var(--color-green);
+    box-shadow: 0 0 8px var(--color-green);
+  }
+
+  .status-indicator.connecting {
+    background: var(--color-yellow);
+    animation: pulse 1s infinite;
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
   }
 
   .status-text {
@@ -522,91 +656,186 @@
     font-size: 0.875rem;
   }
 
-  /* Controls Panel */
-  .controls-panel {
+  /* Panels */
+  .panel {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    backdrop-filter: blur(12px);
+  }
+
+  .panel h3 {
+    font-size: 0.875rem;
+    margin-bottom: var(--space-md);
+    color: var(--color-cyan);
+  }
+
+  /* Connection Panel */
+  .connection-panel {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 360px;
+    max-width: 90vw;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-md);
+  }
+
+  .form-group label {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .text-input,
+  .select-input {
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    font-size: 0.875rem;
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    transition: border-color var(--transition-fast);
+  }
+
+  .text-input:focus,
+  .select-input:focus {
+    outline: none;
+    border-color: var(--color-cyan);
+  }
+
+  .text-input::placeholder {
+    color: var(--color-text-tertiary);
+  }
+
+  .help-link {
+    font-size: 0.75rem;
+    color: var(--color-cyan);
+    text-decoration: none;
+  }
+
+  .help-link:hover {
+    text-decoration: underline;
+  }
+
+  .connect-button {
+    width: 100%;
+    padding: var(--space-md);
+    font-size: 1rem;
+    margin-top: var(--space-sm);
+  }
+
+  /* Control Panel */
+  .control-panel {
     position: absolute;
     left: var(--space-lg);
     top: 50%;
     transform: translateY(-50%);
-    width: 220px;
+    width: 280px;
   }
 
-  .controls-header {
+  .panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: var(--space-md);
   }
 
-  .controls-header h3 {
-    font-size: 0.875rem;
+  .panel-header h3 {
+    margin-bottom: 0;
   }
 
   .icon-button {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.25rem;
+    font-size: 1rem;
     background: transparent;
-    border: none;
-  }
-
-  .controls-content {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    margin-bottom: var(--space-lg);
-  }
-
-  .control-button {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
-    text-align: left;
-    width: 100%;
-  }
-
-  .control-button.active {
-    border-color: var(--color-green);
-  }
-
-  .button-icon {
-    font-size: 1.25rem;
-  }
-
-  .button-label {
-    flex: 1;
-  }
-
-  .gesture-info h4 {
-    font-size: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
     color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .icon-button:hover {
+    border-color: var(--color-red);
+    color: var(--color-red);
+  }
+
+  .control-active {
+    margin-top: var(--space-lg);
+    padding: var(--space-md);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+  }
+
+  .control-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin-bottom: var(--space-sm);
   }
 
-  .gesture-list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-xs);
-  }
-
-  .gesture-list li {
-    display: flex;
-    justify-content: space-between;
+  .control-label {
     font-size: 0.75rem;
+    color: var(--color-magenta);
     font-family: var(--font-mono);
   }
 
-  .gesture-name {
-    color: var(--color-magenta);
+  .control-value {
+    font-size: 0.875rem;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--color-cyan);
   }
 
-  .gesture-desc {
+  .control-bar {
+    position: relative;
+    height: 8px;
+    background: var(--color-bg);
+    border-radius: 4px;
+    overflow: visible;
+  }
+
+  .control-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-cyan), var(--color-magenta));
+    border-radius: 4px;
+    transition: width 0.05s ease-out;
+  }
+
+  .control-indicator {
+    position: absolute;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+    transition: left 0.05s ease-out;
+  }
+
+  .gesture-hint {
+    margin-top: var(--space-lg);
+    text-align: center;
+  }
+
+  .gesture-hint p {
+    font-size: 0.75rem;
     color: var(--color-text-secondary);
   }
 
@@ -646,21 +875,12 @@
     position: absolute;
     right: var(--space-lg);
     top: 200px;
-    width: 280px;
-    max-height: 400px;
-    overflow-y: auto;
+    width: 240px;
   }
 
   .debug-panel h3 {
-    font-size: 0.875rem;
     color: var(--color-magenta);
     margin-bottom: var(--space-sm);
-  }
-
-  .debug-panel h4 {
-    font-size: 0.75rem;
-    color: var(--color-text-secondary);
-    margin: var(--space-sm) 0;
   }
 
   .debug-content {
@@ -673,38 +893,28 @@
     margin-bottom: var(--space-xs);
   }
 
-  .debug-content hr {
-    border: none;
-    border-top: 1px solid var(--border-color);
-    margin: var(--space-sm) 0;
-  }
-
-  .mapping-state {
+  .debug-toggle {
+    position: absolute;
+    right: var(--space-lg);
+    bottom: 80px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
-    margin-bottom: var(--space-xs);
+    justify-content: center;
+    font-size: 1.5rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
   }
 
-  .mapping-id {
-    width: 100px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.625rem;
-  }
-
-  .mapping-bar {
-    flex: 1;
-    height: 8px;
-    background: var(--color-bg-tertiary);
-    overflow: hidden;
-  }
-
-  .mapping-value {
-    width: 40px;
-    text-align: right;
-    font-size: 0.625rem;
+  .debug-toggle:hover {
+    border-color: var(--color-cyan);
+    color: var(--color-cyan);
   }
 
   /* Footer */
@@ -722,9 +932,14 @@
 
   /* Responsive */
   @media (max-width: 768px) {
-    .controls-panel {
+    .connection-panel {
+      width: 90vw;
+      padding: var(--space-md);
+    }
+
+    .control-panel {
       left: var(--space-md);
-      width: 180px;
+      width: 240px;
       padding: var(--space-md);
     }
 

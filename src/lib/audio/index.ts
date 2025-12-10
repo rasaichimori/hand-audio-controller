@@ -2,5 +2,12 @@
  * Audio Module Exports
  */
 
-export { AudioController, getAudioController, destroyAudioController } from './AudioController.js';
+export {
+  AudiotoolController,
+  getAudiotoolController,
+  destroyAudiotoolController,
+  type AudiotoolDevice,
+  type AudiotoolParameter,
+  type ConnectionState,
+} from './AudiotoolController.js';
 
