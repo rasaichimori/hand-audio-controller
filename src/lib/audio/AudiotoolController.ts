@@ -3,8 +3,12 @@
  *
  * Integrates with the Audiotool Nexus SDK to control audio devices
  * in an online Audiotool project using hand gestures.
+ *
+ * Documentation: https://developer-dev.audiotl.com/js-package-documentation/
  */
 
+import { createAudiotoolClient } from "@audiotool/nexus";
+import { getLoginStatus } from "@audiotool/nexus/utils";
 import type { AudioControllerConfig } from "../types/audio.js";
 
 /**
@@ -34,7 +38,8 @@ export type ConnectionState =
   | "disconnected"
   | "connecting"
   | "connected"
-  | "error";
+  | "error"
+  | "needs_login";
 
 /**
  * AudiotoolController class using Nexus SDK
@@ -42,12 +47,12 @@ export type ConnectionState =
 export class AudiotoolController {
   private client: any = null;
   private document: any = null;
-  private nexus: any = null;
+  private loginStatus: any = null;
 
   private _connectionState: ConnectionState = "disconnected";
   private _isInitialized = false;
   private _projectUrl = "";
-  private _pat = "";
+  private _clientId = "";
   private _error: string | null = null;
 
   // Discovered devices from the project
@@ -81,28 +86,18 @@ export class AudiotoolController {
   }
 
   /**
-   * Set Personal Access Token
+   * Set client ID for OAuth
    */
-  setPAT(pat: string): void {
-    this._pat = pat;
-    if (this.client) {
-      this.client.setPAT(pat);
-    }
+  setClientId(clientId: string): void {
+    this._clientId = clientId;
     this.notifyStateChange();
   }
 
   /**
-   * Get current PAT
+   * Get current client ID
    */
-  get pat(): string {
-    return this._pat;
-  }
-
-  /**
-   * Check if PAT is set
-   */
-  hasPAT(): boolean {
-    return this._pat.length > 0;
+  get clientId(): string {
+    return this._clientId;
   }
 
   /**
@@ -164,31 +159,51 @@ export class AudiotoolController {
   }
 
   /**
-   * Initialize the Audiotool client
+   * Check login status and potentially trigger login
    */
-  async initialize(): Promise<void> {
-    if (this._isInitialized) {
-      console.warn("AudiotoolController already initialized");
-      return;
+  async checkLogin(): Promise<boolean> {
+    if (!this._clientId) {
+      this._error = "Client ID is required";
+      this._connectionState = "error";
+      this.notifyStateChange();
+      return false;
     }
 
     try {
-      // Dynamically import the nexus SDK
-      this.nexus = await import("@audiotool/nexus");
-      this.client = this.nexus.createAudiotoolClient();
-
-      if (this._pat) {
-        this.client.setPAT(this._pat);
+      console.log("[Audiotool] Checking login status...");
+      this.loginStatus = await getLoginStatus({
+        clientId: this._clientId,
+        redirectUrl: "http://127.0.0.1:5173/",
+        scope: "project:write",
+      });
+      console.log(this.loginStatus);
+      if (!this.loginStatus.loggedIn) {
+        console.log("[Audiotool] User not logged in");
+        this._connectionState = "needs_login";
+        this.notifyStateChange();
+        return false;
       }
 
-      this._isInitialized = true;
-      console.log("AudiotoolController initialized successfully");
-      this.notifyStateChange();
+      console.log("[Audiotool] User is logged in");
+      return true;
     } catch (error) {
-      console.error("Failed to initialize AudiotoolController:", error);
-      this._error = `Failed to initialize: ${error instanceof Error ? error.message : "Unknown error"}`;
+      console.error("[Audiotool] Login check failed:", error);
+      this._error = `Login check failed: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`;
+      this._connectionState = "error";
       this.notifyStateChange();
-      throw error;
+      return false;
+    }
+  }
+
+  /**
+   * Trigger the login flow
+   */
+  triggerLogin(): void {
+    if (this.loginStatus && !this.loginStatus.loggedIn) {
+      console.log("[Audiotool] Triggering login...");
+      this.loginStatus.login();
     }
   }
 
@@ -196,12 +211,8 @@ export class AudiotoolController {
    * Connect to an Audiotool project
    */
   async connect(): Promise<void> {
-    if (!this._isInitialized) {
-      await this.initialize();
-    }
-
-    if (!this._pat) {
-      this._error = "PAT is required to connect";
+    if (!this._clientId) {
+      this._error = "Client ID is required";
       this._connectionState = "error";
       this.notifyStateChange();
       return;
@@ -219,28 +230,54 @@ export class AudiotoolController {
     this.notifyStateChange();
 
     try {
-      // Ensure PAT is set on client
-      this.client.setPAT(this._pat);
+      // Check login status first
+      const isLoggedIn = await this.checkLogin();
+      if (!isLoggedIn) {
+        return; // State already set in checkLogin
+      }
+
+      console.log("[Audiotool] Creating client...");
+      // Create client with the login status (OAuth authorization)
+      this.client = await createAudiotoolClient({
+        authorization: this.loginStatus,
+      });
+      console.log("[Audiotool] Client created successfully");
 
       // Create synced document config
       const docConfig = {
         mode: "online" as const,
         project: this._projectUrl,
       };
+      console.log(
+        "[Audiotool] Creating synced document for:",
+        this._projectUrl
+      );
 
       // Create and start the synced document
       this.document = await this.client.createSyncedDocument(docConfig);
+      console.log("[Audiotool] Document created, starting...");
+
       await this.document.start();
+      console.log("[Audiotool] Document started successfully");
+
+      this._isInitialized = true;
 
       // Discover devices in the project
+      console.log("[Audiotool] Discovering devices...");
       await this.discoverDevices();
 
       this._connectionState = "connected";
-      console.log("Connected to Audiotool project");
+      console.log(
+        "[Audiotool] Connected! Found",
+        this._devices.size,
+        "devices"
+      );
       this.notifyStateChange();
     } catch (error) {
-      console.error("Failed to connect to Audiotool:", error);
-      this._error = `Connection failed: ${error instanceof Error ? error.message : "Unknown error"}`;
+      console.error("[Audiotool] Failed to connect:", error);
+      this._error = `Connection failed: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`;
       this._connectionState = "error";
       this.notifyStateChange();
     }
@@ -259,17 +296,18 @@ export class AudiotoolController {
       this.document = null;
     }
 
+    this.client = null;
     this._devices.clear();
     this._selectedDeviceId = null;
     this._selectedParameterName = null;
     this._connectionState = "disconnected";
     this._error = null;
+    this._isInitialized = false;
     this.notifyStateChange();
   }
 
   /**
    * Discover devices in the connected project
-   * This reads the document model to find all devices
    */
   private async discoverDevices(): Promise<void> {
     if (!this.document) return;
@@ -277,75 +315,100 @@ export class AudiotoolController {
     this._devices.clear();
 
     try {
-      // Access the document's entity collection
-      // The document.model contains all entities in the project
-      const model = this.document.model;
+      // Device types to look for (from Audiotool)
+      const deviceTypes = [
+        "stompboxSlope",
+        "stompboxDelay",
+        "stompboxReverb",
+        "stompboxDistortion",
+        "stompboxCompressor",
+        "stompboxBitcrusher",
+        "stompboxChorus",
+        "stompboxFlanger",
+        "stompboxPhaser",
+        "stompboxTremolo",
+        "stompboxFilter",
+        "ringModulator",
+        "waveshaper",
+        "centroid",
+        "audioSplitter",
+        "pulverisateur",
+        "heisenberg",
+        "machiniste",
+        "bassline",
+        "tb303",
+        "beatbox",
+        "tonematrix",
+        "minimachine",
+        "kobolt",
+        "output",
+      ];
 
-      if (model && model.entities) {
-        for (const [id, entity] of model.entities) {
-          // Check if this entity is a device (has a type that looks like a device)
-          const entityType = entity.$type ?? entity.type ?? "";
+      // Debug: Get all entities first
+      try {
+        const allEntities = this.document.queryEntitiesWithoutLock.get();
+        console.log(
+          "[Audiotool] All entities in document:",
+          allEntities.length
+        );
 
-          // Skip non-device entities (like connections, anchors, etc.)
-          if (this.isDeviceType(entityType)) {
+        // Log entity types found
+        const typeCounts: Record<string, number> = {};
+        for (const entity of allEntities) {
+          const type = entity.$type ?? entity.type ?? "unknown";
+          typeCounts[type] = (typeCounts[type] || 0) + 1;
+        }
+        console.log("[Audiotool] Entity types found:", typeCounts);
+      } catch (err) {
+        console.log("[Audiotool] Could not query all entities:", err);
+      }
+
+      // Query devices by type
+      for (const deviceType of deviceTypes) {
+        try {
+          const entities = this.document.queryEntitiesWithoutLock
+            .ofTypes(deviceType)
+            .get();
+
+          if (entities.length > 0) {
+            console.log(
+              `[Audiotool] Found ${entities.length} ${deviceType} device(s)`
+            );
+          }
+
+          for (const entity of entities) {
+            console.log(`[Audiotool] Device ${deviceType}:`, entity.id, entity);
             const device: AudiotoolDevice = {
-              id: id.toString(),
-              type: entityType,
-              name: this.getDeviceName(entityType, id.toString()),
-              parameters: this.extractParameters(entity),
+              id: entity.id,
+              type: deviceType,
+              name: this.getDeviceName(deviceType, entity.id),
+              parameters: this.extractParameters(entity, deviceType),
             };
+            console.log(
+              `[Audiotool] Extracted parameters:`,
+              Array.from(device.parameters.keys())
+            );
             this._devices.set(device.id, device);
           }
+        } catch (err) {
+          // This device type might not exist in the project
         }
       }
 
-      console.log(`Discovered ${this._devices.size} devices`);
+      console.log(
+        `[Audiotool] Total discovered: ${this._devices.size} devices`
+      );
     } catch (error) {
-      console.error("Error discovering devices:", error);
-      // Don't throw - we might still be able to work with the project
+      console.error("[Audiotool] Error discovering devices:", error);
     }
-  }
-
-  /**
-   * Check if an entity type represents a device
-   */
-  private isDeviceType(type: string): boolean {
-    // Common Audiotool device types
-    const deviceTypes = [
-      "stompboxSlope",
-      "ringModulator",
-      "waveshaper",
-      "centroid",
-      "audioSplitter",
-      "delay",
-      "reverb",
-      "compressor",
-      "eq",
-      "filter",
-      "synth",
-      "sampler",
-      "pulverisateur",
-      "heisenberg",
-      "machiniste",
-      "bassline",
-      "beatbox",
-      "tonematrix",
-      "minimachine",
-      "output", // Master output
-    ];
-
-    const lowerType = type.toLowerCase();
-    return deviceTypes.some(
-      (dt) => lowerType.includes(dt.toLowerCase()) || lowerType.includes("box")
-    );
   }
 
   /**
    * Get a human-readable name for a device
    */
   private getDeviceName(type: string, id: string): string {
-    // Clean up the type name
     const cleanType = type
+      .replace(/^stompbox/, "")
       .replace(/([A-Z])/g, " $1")
       .trim()
       .replace(/^./, (s) => s.toUpperCase());
@@ -356,58 +419,68 @@ export class AudiotoolController {
   /**
    * Extract parameters from an entity
    */
-  private extractParameters(entity: any): Map<string, AudiotoolParameter> {
+  private extractParameters(
+    entity: any,
+    deviceType: string
+  ): Map<string, AudiotoolParameter> {
     const params = new Map<string, AudiotoolParameter>();
 
-    // Common parameter names to look for
+    // Parameter names by device type
+    const paramsByType: Record<string, string[]> = {
+      stompboxSlope: ["frequencyHz", "resonanceFactor", "filterMode"],
+      stompboxDelay: ["feedbackFactor", "mix", "stepLengthIndex"],
+      stompboxReverb: ["roomSize", "damping", "mix", "width"],
+      stompboxDistortion: ["drive", "tone", "level"],
+      stompboxCompressor: ["threshold", "ratio", "attack", "release", "gain"],
+      stompboxFilter: ["frequency", "resonance", "filterType"],
+      ringModulator: ["boostGain", "frequency", "mix"],
+      waveshaper: ["drive", "mix"],
+      pulverisateur: ["gate", "comb", "sustain", "release"],
+      heisenberg: ["cutoff", "resonance", "drive", "volume"],
+      bassline: ["cutoff", "resonance", "envMod", "decay", "accent"],
+      tb303: ["cutoff", "resonance", "envMod", "decay", "accent"],
+      tonematrix: ["patternIndex", "volume"],
+    };
+
+    const paramsToLookFor = paramsByType[deviceType] || [];
     const commonParams = [
-      "frequencyHz",
-      "frequency",
-      "resonanceFactor",
-      "resonance",
-      "filterMode",
-      "cutoff",
-      "gain",
       "volume",
+      "gain",
+      "level",
       "mix",
-      "feedback",
-      "time",
-      "rate",
-      "depth",
+      "pan",
+      "frequency",
+      "cutoff",
+      "resonance",
       "drive",
-      "boostGain",
       "attack",
       "decay",
       "sustain",
       "release",
-      "pan",
-      "level",
+      "rate",
+      "depth",
+      "feedback",
+      "time",
+      "displayName",
     ];
 
-    for (const paramName of commonParams) {
-      if (paramName in entity) {
-        const value = entity[paramName];
-        if (typeof value === "number") {
-          params.set(paramName, {
-            name: paramName,
-            value: value,
-          });
-        }
-      }
-    }
+    const allParams = [...new Set([...paramsToLookFor, ...commonParams])];
 
-    // Also try to get all numeric properties
-    for (const key of Object.keys(entity)) {
-      if (
-        !key.startsWith("$") &&
-        !key.startsWith("_") &&
-        typeof entity[key] === "number" &&
-        !params.has(key)
-      ) {
-        params.set(key, {
-          name: key,
-          value: entity[key],
-        });
+    for (const paramName of allParams) {
+      try {
+        // Access via entity.fields API
+        const field = entity.fields?.[paramName];
+        if (field !== undefined) {
+          const value = field.value ?? field.get?.() ?? field;
+          if (typeof value === "number" || typeof value === "string") {
+            params.set(paramName, {
+              name: paramName,
+              value: typeof value === "number" ? value : 0,
+            });
+          }
+        }
+      } catch {
+        // Parameter doesn't exist
       }
     }
 
@@ -420,7 +493,7 @@ export class AudiotoolController {
   selectDevice(deviceId: string): void {
     if (this._devices.has(deviceId)) {
       this._selectedDeviceId = deviceId;
-      this._selectedParameterName = null; // Reset parameter selection
+      this._selectedParameterName = null;
       this.notifyStateChange();
     }
   }
@@ -435,9 +508,6 @@ export class AudiotoolController {
 
   /**
    * Set a parameter value on a device
-   * @param deviceId - The device ID
-   * @param paramName - The parameter name
-   * @param value - The normalized value (0-1)
    */
   async setParameter(
     deviceId: string,
@@ -449,74 +519,85 @@ export class AudiotoolController {
     }
 
     const clampedValue = Math.max(0, Math.min(1, value));
+    const device = this._devices.get(deviceId);
+    if (!device) return;
 
     try {
-      // Use the document's modify method to change parameters
+      const mappedValue = this.mapParameterValue(paramName, clampedValue);
+
+      // Use document.modify() to update parameters
       await this.document.modify((t: any) => {
-        // Get the entity location from the device ID
-        const location = { id: deviceId };
-
-        // Different parameters have different ranges
-        // We'll need to map our 0-1 value to the appropriate range
-        const mappedValue = this.mapParameterValue(paramName, clampedValue);
-
-        // Update the parameter
-        t.update(location, {
-          [paramName]: mappedValue,
-        });
+        const entity = t.entities.ofIds(deviceId).getOne();
+        if (entity) {
+          t.update(entity, {
+            [paramName]: mappedValue,
+          });
+        }
       });
 
-      // Update our local cache
-      const device = this._devices.get(deviceId);
-      if (device) {
-        const param = device.parameters.get(paramName);
-        if (param) {
-          param.value = clampedValue;
-        }
+      // Update local cache
+      const param = device.parameters.get(paramName);
+      if (param) {
+        param.value = mappedValue;
       }
     } catch (error) {
-      // Silent fail for parameter updates to avoid spamming console
-      // This can happen if the parameter doesn't exist or is read-only
+      // Silent fail for frequent parameter updates
     }
   }
 
   /**
-   * Map a normalized 0-1 value to the appropriate parameter range
+   * Map normalized 0-1 value to parameter range
    */
-  private mapParameterValue(paramName: string, normalizedValue: number): number {
+  private mapParameterValue(
+    paramName: string,
+    normalizedValue: number
+  ): number {
     const lowerName = paramName.toLowerCase();
 
-    // Frequency parameters (typically 20Hz - 20000Hz, logarithmic)
     if (lowerName.includes("frequency") || lowerName.includes("cutoff")) {
       return 20 * Math.pow(1000, normalizedValue); // 20Hz to 20kHz
     }
-
-    // Resonance/Q (typically 0-1 or 0-20)
-    if (lowerName.includes("resonance") || lowerName.includes("q")) {
-      return normalizedValue; // Keep 0-1 range
+    if (lowerName.includes("resonance") || lowerName.includes("factor")) {
+      return normalizedValue;
+    }
+    if (
+      lowerName.includes("gain") ||
+      lowerName.includes("boost") ||
+      lowerName.includes("level")
+    ) {
+      return normalizedValue * 2;
+    }
+    if (
+      lowerName.includes("time") ||
+      lowerName.includes("delay") ||
+      lowerName.includes("attack") ||
+      lowerName.includes("decay") ||
+      lowerName.includes("release")
+    ) {
+      return normalizedValue * 2;
+    }
+    if (lowerName.includes("mix") || lowerName.includes("wet")) {
+      return normalizedValue;
+    }
+    if (lowerName.includes("feedback")) {
+      return normalizedValue * 0.95;
+    }
+    if (
+      lowerName.includes("mode") ||
+      lowerName.includes("type") ||
+      lowerName.includes("index")
+    ) {
+      return Math.floor(normalizedValue * 4);
+    }
+    if (lowerName.includes("drive")) {
+      return normalizedValue * 10;
     }
 
-    // Gain in dB (typically -inf to +12dB)
-    if (lowerName.includes("gain") || lowerName.includes("boost")) {
-      return normalizedValue * 12; // 0 to 12 dB
-    }
-
-    // Time parameters (typically 0-2 seconds)
-    if (lowerName.includes("time") || lowerName.includes("delay")) {
-      return normalizedValue * 2; // 0 to 2 seconds
-    }
-
-    // Mode/type selectors (integers)
-    if (lowerName.includes("mode") || lowerName.includes("type")) {
-      return Math.floor(normalizedValue * 4); // 0 to 4
-    }
-
-    // Default: keep 0-1 range
     return normalizedValue;
   }
 
   /**
-   * Set the selected parameter value (convenience method)
+   * Set the selected parameter value
    */
   async setSelectedParameter(value: number): Promise<void> {
     if (this._selectedDeviceId && this._selectedParameterName) {
@@ -543,13 +624,18 @@ export class AudiotoolController {
   }
 
   /**
+   * Check if needs login
+   */
+  get needsLogin(): boolean {
+    return this._connectionState === "needs_login";
+  }
+
+  /**
    * Clean up resources
    */
   async destroy(): Promise<void> {
     await this.disconnect();
-    this.client = null;
-    this.nexus = null;
-    this._isInitialized = false;
+    this.loginStatus = null;
   }
 }
 
@@ -573,4 +659,3 @@ export const destroyAudiotoolController = async (): Promise<void> => {
     globalController = null;
   }
 };
-

@@ -10,6 +10,9 @@
   import { getHandTilt } from "$lib/hand-tracking/landmarkUtils.js";
   import type { HandTrackingResult } from "$lib/types/index.js";
 
+  // Props from server load function
+  let { data } = $props();
+
   // State
   let videoElement: HTMLVideoElement;
   let canvasElement: HTMLCanvasElement;
@@ -33,11 +36,11 @@
   let currentHandAngle = $state(0.5);
   let showConnectionPanel = $state(true);
 
-  // Audiotool connection state
-  let patInput = $state("");
-  let projectUrlInput = $state("");
+  // Audiotool connection state - pre-fill from server-loaded env vars
+  let clientIdInput = $state(data.clientId);
+  let projectUrlInput = $state(data.projectUrl);
   let connectionState = $state<
-    "disconnected" | "connecting" | "connected" | "error"
+    "disconnected" | "connecting" | "connected" | "error" | "needs_login"
   >("disconnected");
   let connectionError = $state("");
 
@@ -157,12 +160,21 @@
   const connectToAudiotool = async () => {
     if (!audiotoolController) return;
 
-    audiotoolController.setPAT(patInput);
+    audiotoolController.setClientId(clientIdInput);
     audiotoolController.setProjectUrl(projectUrlInput);
     await audiotoolController.connect();
 
     if (audiotoolController.connected) {
       showConnectionPanel = false;
+    }
+  };
+
+  /**
+   * Trigger Audiotool login
+   */
+  const triggerLogin = () => {
+    if (audiotoolController) {
+      audiotoolController.triggerLogin();
     }
   };
 
@@ -343,21 +355,21 @@
         <h3>Connect to Audiotool</h3>
 
         <div class="form-group">
-          <label for="pat-input">Personal Access Token</label>
+          <label for="client-id">Client ID</label>
           <input
-            id="pat-input"
-            type="password"
-            bind:value={patInput}
-            placeholder="at_pat_..."
+            id="client-id"
+            type="text"
+            bind:value={clientIdInput}
+            placeholder="your-app-client-id"
             class="text-input"
           />
           <a
-            href="https://rpc.audiotool.com/dev/"
+            href="https://developer.audiotool.com/applications"
             target="_blank"
             rel="noopener"
             class="help-link"
           >
-            Get your PAT →
+            Create an app →
           </a>
         </div>
 
@@ -376,15 +388,22 @@
           <p class="error">{connectionError}</p>
         {/if}
 
-        <button
-          class="connect-button"
-          onclick={connectToAudiotool}
-          disabled={connectionState === "connecting" ||
-            !patInput ||
-            !projectUrlInput}
-        >
-          {connectionState === "connecting" ? "Connecting..." : "Connect"}
-        </button>
+        {#if connectionState === "needs_login"}
+          <p class="info">You need to log in to Audiotool to continue.</p>
+          <button class="connect-button login" onclick={triggerLogin}>
+            Log in to Audiotool
+          </button>
+        {:else}
+          <button
+            class="connect-button"
+            onclick={connectToAudiotool}
+            disabled={connectionState === "connecting" ||
+              !clientIdInput ||
+              !projectUrlInput}
+          >
+            {connectionState === "connecting" ? "Connecting..." : "Connect"}
+          </button>
+        {/if}
       </div>
     {/if}
 
@@ -654,6 +673,22 @@
   .error {
     color: var(--color-red);
     font-size: 0.875rem;
+  }
+
+  .info {
+    color: var(--color-yellow);
+    font-size: 0.875rem;
+    margin-bottom: var(--space-sm);
+  }
+
+  .connect-button.login {
+    background: var(--color-cyan);
+    border-color: var(--color-cyan);
+  }
+
+  .connect-button.login:hover {
+    background: transparent;
+    color: var(--color-cyan);
   }
 
   /* Panels */
