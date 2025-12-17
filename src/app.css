@@ -19,9 +19,9 @@
 /* Custom Properties */
 :root {
 	/* Colors - Cyberpunk Palette */
-	--color-bg-primary: #0a0a0f;
-	--color-bg-secondary: #12121a;
-	--color-bg-tertiary: #1a1a25;
+	--color-bg-primary: #000000;
+	--color-bg-secondary: #212121;
+	--color-bg-tertiary: #4b4b4b;
 	--color-bg-overlay: rgba(10, 10, 15, 0.85);
 
 	--color-magenta: #ff00ff;
@@ -31,7 +31,7 @@
 	--color-red: #ff3366;
 
 	--color-text-primary: #e0e0e0;
-	--color-text-secondary: #888899;
+	--color-text-secondary: #939393;
 
 	/* Typography - Monospace only */
 	--font-display: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
@@ -51,7 +51,7 @@
 	--border-radius-md: 8px;
 	--border-radius-lg: 16px;
 	--border-width: 1px;
-	--border-color: rgba(0, 255, 255, 0.3);
+	--border-color: rgba(255, 255, 255, 0.3);
 
 	/* Transitions */
 	--transition-fast: 150ms ease;

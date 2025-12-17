@@ -29,7 +29,9 @@ declare module '$env/static/private' {
 	export const AT_PAT_DEV: string;
 	export const AT_CLIENT_ID_DEV: string;
 	export const AT_CLIENT_ID: string;
+	export const VITE_AT_CLIENT_ID: string;
 	export const PROJECT_URL: string;
+	export const VITE_AUDIOTOOL_PROJECT_URL: string;
 	export const NVM_INC: string;
 	export const TERM_PROGRAM: string;
 	export const NODE: string;
@@ -125,7 +127,9 @@ declare module '$env/dynamic/private' {
 		AT_PAT_DEV: string;
 		AT_CLIENT_ID_DEV: string;
 		AT_CLIENT_ID: string;
+		VITE_AT_CLIENT_ID: string;
 		PROJECT_URL: string;
+		VITE_AUDIOTOOL_PROJECT_URL: string;
 		NVM_INC: string;
 		TERM_PROGRAM: string;
 		NODE: string;

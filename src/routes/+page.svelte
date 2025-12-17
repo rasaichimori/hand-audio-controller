@@ -2,16 +2,10 @@
   import { onMount } from "svelte";
   import { HandTracker } from "$lib/hand-tracking/HandTracker.js";
   import { OverlayRenderer } from "$lib/graphics/OverlayRenderer.js";
-  import {
-    AudiotoolController,
-    type AudiotoolDevice,
-  } from "$lib/audio/AudiotoolController.js";
+  import { AudiotoolController } from "$lib/audio/AudiotoolController.svelte.ts";
   import { FPSCounter } from "$lib/utils/performance.js";
   import { getHandTilt } from "$lib/hand-tracking/landmarkUtils.js";
   import type { HandTrackingResult } from "$lib/types/index.js";
-
-  // Props from server load function
-  let { data } = $props();
 
   // State
   let videoElement: HTMLVideoElement;
@@ -36,18 +30,7 @@
   let currentHandAngle = $state(0.5);
   let showConnectionPanel = $state(true);
 
-  // Audiotool connection state - pre-fill from server-loaded env vars
-  let clientIdInput = $state(data.clientId);
-  let projectUrlInput = $state(data.projectUrl);
-  let connectionState = $state<
-    "disconnected" | "connecting" | "connected" | "error" | "needs_login"
-  >("disconnected");
-  let connectionError = $state("");
-
-  // Device selection
-  let devices = $state<AudiotoolDevice[]>([]);
-  let selectedDeviceId = $state<string | null>(null);
-  let selectedParameterName = $state<string | null>(null);
+  let projectUrlInput = $state(import.meta.env.VITE_AUDIOTOOL_PROJECT_URL);
 
   // Camera dimensions
   let videoWidth = $state(1280);
@@ -61,8 +44,9 @@
    * Get parameters for selected device
    */
   const getSelectedDeviceParameters = (): string[] => {
-    if (!selectedDeviceId) return [];
-    const device = devices.find((d) => d.id === selectedDeviceId);
+    if (!audiotoolController?.selectedDeviceId) return [];
+    const selectedId = audiotoolController.selectedDeviceId;
+    const device = audiotoolController.devices.find((d) => d.id === selectedId);
     if (!device) return [];
     return Array.from(device.parameters.keys());
   };
@@ -128,16 +112,6 @@
 
       // Initialize Audiotool controller
       audiotoolController = new AudiotoolController();
-      audiotoolController.setStateChangeCallback(() => {
-        // Update reactive state from controller
-        connectionState =
-          audiotoolController?.connectionState ?? "disconnected";
-        connectionError = audiotoolController?.error ?? "";
-        devices = audiotoolController?.devices ?? [];
-        selectedDeviceId = audiotoolController?.selectedDeviceId ?? null;
-        selectedParameterName =
-          audiotoolController?.selectedParameterName ?? null;
-      });
 
       // Initialize FPS counter
       fpsCounter = new FPSCounter(500);
@@ -160,7 +134,6 @@
   const connectToAudiotool = async () => {
     if (!audiotoolController) return;
 
-    audiotoolController.setClientId(clientIdInput);
     audiotoolController.setProjectUrl(projectUrlInput);
     await audiotoolController.connect();
 
@@ -195,8 +168,6 @@
     const deviceId = target.value;
     if (deviceId && audiotoolController) {
       audiotoolController.selectDevice(deviceId);
-      selectedDeviceId = deviceId;
-      selectedParameterName = null;
     }
   };
 
@@ -208,7 +179,6 @@
     const paramName = target.value;
     if (paramName && audiotoolController) {
       audiotoolController.selectParameter(paramName);
-      selectedParameterName = paramName;
     }
   };
 
@@ -235,8 +205,8 @@
       // Send to Audiotool if connected and parameter selected
       if (
         audiotoolController?.connected &&
-        selectedDeviceId &&
-        selectedParameterName
+        audiotoolController.selectedDeviceId &&
+        audiotoolController.selectedParameterName
       ) {
         await audiotoolController.setSelectedParameter(tilt);
       }
@@ -316,10 +286,10 @@
         Air Mod
       </h1>
       <div class="status">
-        {#if connectionState === "connected"}
+        {#if audiotoolController?.connectionState === "connected"}
           <span class="status-indicator connected"></span>
           <span class="status-text">Connected</span>
-        {:else if connectionState === "connecting"}
+        {:else if audiotoolController?.connectionState === "connecting"}
           <span class="status-indicator connecting"></span>
           <span class="status-text">Connecting...</span>
         {:else}
@@ -355,25 +325,6 @@
         <h3>Connect to Audiotool</h3>
 
         <div class="form-group">
-          <label for="client-id">Client ID</label>
-          <input
-            id="client-id"
-            type="text"
-            bind:value={clientIdInput}
-            placeholder="your-app-client-id"
-            class="text-input"
-          />
-          <a
-            href="https://developer.audiotool.com/applications"
-            target="_blank"
-            rel="noopener"
-            class="help-link"
-          >
-            Create an app →
-          </a>
-        </div>
-
-        <div class="form-group">
           <label for="project-url">Project URL</label>
           <input
             id="project-url"
@@ -384,11 +335,11 @@
           />
         </div>
 
-        {#if connectionError}
-          <p class="error">{connectionError}</p>
+        {#if audiotoolController?.error}
+          <p class="error">{audiotoolController.error}</p>
         {/if}
 
-        {#if connectionState === "needs_login"}
+        {#if audiotoolController?.connectionState === "needs_login"}
           <p class="info">You need to log in to Audiotool to continue.</p>
           <button class="connect-button login" onclick={triggerLogin}>
             Log in to Audiotool
@@ -397,18 +348,19 @@
           <button
             class="connect-button"
             onclick={connectToAudiotool}
-            disabled={connectionState === "connecting" ||
-              !clientIdInput ||
+            disabled={audiotoolController?.connectionState === "connecting" ||
               !projectUrlInput}
           >
-            {connectionState === "connecting" ? "Connecting..." : "Connect"}
+            {audiotoolController?.connectionState === "connecting"
+              ? "Connecting..."
+              : "Connect"}
           </button>
         {/if}
       </div>
     {/if}
 
     <!-- Device Control Panel (shown when connected) -->
-    {#if isInitialized && connectionState === "connected"}
+    {#if isInitialized && audiotoolController?.connectionState === "connected"}
       <div class="control-panel panel">
         <div class="panel-header">
           <h3>Device Control</h3>
@@ -426,23 +378,23 @@
             id="device-select"
             class="select-input"
             onchange={handleDeviceSelect}
-            value={selectedDeviceId ?? ""}
+            value={audiotoolController.selectedDeviceId ?? ""}
           >
             <option value="" disabled>Select a device...</option>
-            {#each devices as device}
+            {#each audiotoolController.devices as device}
               <option value={device.id}>{device.name}</option>
             {/each}
           </select>
         </div>
 
-        {#if selectedDeviceId}
+        {#if audiotoolController.selectedDeviceId}
           <div class="form-group">
             <label for="param-select">Parameter</label>
             <select
               id="param-select"
               class="select-input"
               onchange={handleParameterSelect}
-              value={selectedParameterName ?? ""}
+              value={audiotoolController.selectedParameterName ?? ""}
             >
               <option value="" disabled>Select a parameter...</option>
               {#each getSelectedDeviceParameters() as param}
@@ -452,11 +404,11 @@
           </div>
         {/if}
 
-        {#if selectedParameterName}
+        {#if audiotoolController.selectedParameterName}
           <div class="control-active">
             <div class="control-info">
               <span class="control-label"
-                >Hand Tilt → {selectedParameterName}</span
+                >Hand Tilt → {audiotoolController.selectedParameterName}</span
               >
               <span class="control-value"
                 >{(currentHandAngle * 100).toFixed(0)}%</span
@@ -479,6 +431,10 @@
           <p>Tilt your hand up/down to control the parameter</p>
         </div>
       </div>
+
+      <button onclick={() => audiotoolController?.createPulverisateur()}
+        >Make Pulverisateur</button
+      >
     {/if}
 
     <!-- Stats Panel -->
@@ -501,10 +457,12 @@
         <h3>Debug Info</h3>
         <div class="debug-content">
           <p>Video: {videoWidth}×{videoHeight}</p>
-          <p>Connection: {connectionState}</p>
-          <p>Devices: {devices.length}</p>
-          <p>Selected: {selectedDeviceId ?? "none"}</p>
-          <p>Parameter: {selectedParameterName ?? "none"}</p>
+          <p>Connection: {audiotoolController?.connectionState ?? "none"}</p>
+          <p>Devices: {audiotoolController?.devices.length ?? 0}</p>
+          <p>Selected: {audiotoolController?.selectedDeviceId ?? "none"}</p>
+          <p>
+            Parameter: {audiotoolController?.selectedParameterName ?? "none"}
+          </p>
           <p>Hand Angle: {currentHandAngle.toFixed(3)}</p>
         </div>
       </div>

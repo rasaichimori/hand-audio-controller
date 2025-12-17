@@ -4,10 +4,9 @@
 
 export {
   AudiotoolController,
-  getAudiotoolController,
   destroyAudiotoolController,
+  getAudiotoolController,
   type AudiotoolDevice,
   type AudiotoolParameter,
   type ConnectionState,
-} from './AudiotoolController.js';
-
+} from "./AudiotoolController.svelte.ts";
