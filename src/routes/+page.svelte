@@ -4,8 +4,37 @@
   import { OverlayRenderer } from "$lib/graphics/OverlayRenderer.js";
   import { AudiotoolController } from "$lib/audio/AudiotoolController.svelte.ts";
   import { FPSCounter } from "$lib/utils/performance.js";
-  import { getHandTilt } from "$lib/hand-tracking/landmarkUtils.js";
-  import type { HandTrackingResult } from "$lib/types/index.js";
+  import {
+    getHandTilt,
+    getPinchAngle,
+    getNormalizedPinchDistance,
+  } from "$lib/hand-tracking/landmarkUtils.js";
+  import { LandmarkIndex } from "$lib/types/hand.js";
+  import type { HandTrackingResult, HandResult } from "$lib/types/index.js";
+
+  /**
+   * Control source identifiers
+   */
+  type ControlSourceId =
+    | "leftPinchDistance"
+    | "rightPinchDistance"
+    | "leftThumbX"
+    | "leftThumbY"
+    | "rightThumbX"
+    | "rightThumbY"
+    | "leftPinchAngle"
+    | "rightPinchAngle";
+
+  /**
+   * Control source configuration
+   */
+  interface ControlSource {
+    id: ControlSourceId;
+    label: string;
+    deviceId: string | null;
+    parameterName: string | null;
+    value: number;
+  }
 
   // State
   let videoElement: HTMLVideoElement;
@@ -32,6 +61,66 @@
 
   let projectUrlInput = $state(import.meta.env.VITE_AUDIOTOOL_PROJECT_URL);
 
+  // Control sources state
+  let controlSources = $state<ControlSource[]>([
+    {
+      id: "leftPinchDistance",
+      label: "Left Pinch Distance",
+      deviceId: null,
+      parameterName: null,
+      value: 0,
+    },
+    {
+      id: "rightPinchDistance",
+      label: "Right Pinch Distance",
+      deviceId: null,
+      parameterName: null,
+      value: 0,
+    },
+    {
+      id: "leftThumbX",
+      label: "Left Thumb X",
+      deviceId: null,
+      parameterName: null,
+      value: 0,
+    },
+    {
+      id: "leftThumbY",
+      label: "Left Thumb Y",
+      deviceId: null,
+      parameterName: null,
+      value: 0,
+    },
+    {
+      id: "rightThumbX",
+      label: "Right Thumb X",
+      deviceId: null,
+      parameterName: null,
+      value: 0,
+    },
+    {
+      id: "rightThumbY",
+      label: "Right Thumb Y",
+      deviceId: null,
+      parameterName: null,
+      value: 0,
+    },
+    {
+      id: "leftPinchAngle",
+      label: "Left Pinch Angle",
+      deviceId: null,
+      parameterName: null,
+      value: 0,
+    },
+    {
+      id: "rightPinchAngle",
+      label: "Right Pinch Angle",
+      deviceId: null,
+      parameterName: null,
+      value: 0,
+    },
+  ]);
+
   // Camera dimensions
   let videoWidth = $state(1280);
   let videoHeight = $state(720);
@@ -41,14 +130,58 @@
   let containerHeight = $state(720);
 
   /**
-   * Get parameters for selected device
+   * Get parameters for a specific device
    */
-  const getSelectedDeviceParameters = (): string[] => {
-    if (!audiotoolController?.selectedDeviceId) return [];
-    const selectedId = audiotoolController.selectedDeviceId;
-    const device = audiotoolController.devices.find((d) => d.id === selectedId);
+  const getDeviceParameters = (deviceId: string | null): string[] => {
+    if (!deviceId || !audiotoolController) return [];
+    const device = audiotoolController.devices.find((d) => d.id === deviceId);
     if (!device) return [];
     return Array.from(device.parameters.keys());
+  };
+
+  /**
+   * Extract control values from a hand result
+   */
+  const extractHandValues = (
+    hand: HandResult,
+    handedness: "Left" | "Right"
+  ) => {
+    const landmarks = hand.landmarks;
+    const thumbTip = landmarks[LandmarkIndex.THUMB_TIP];
+
+    return {
+      pinchDistance: getNormalizedPinchDistance(landmarks),
+      thumbX: thumbTip.x,
+      thumbY: thumbTip.y,
+      pinchAngle: getPinchAngle(landmarks),
+    };
+  };
+
+  /**
+   * Update a control source's device mapping
+   */
+  const updateControlSourceDevice = (
+    sourceId: ControlSourceId,
+    deviceId: string
+  ) => {
+    const source = controlSources.find((s) => s.id === sourceId);
+    if (source) {
+      source.deviceId = deviceId || null;
+      source.parameterName = null; // Reset parameter when device changes
+    }
+  };
+
+  /**
+   * Update a control source's parameter mapping
+   */
+  const updateControlSourceParameter = (
+    sourceId: ControlSourceId,
+    paramName: string
+  ) => {
+    const source = controlSources.find((s) => s.id === sourceId);
+    if (source) {
+      source.parameterName = paramName || null;
+    }
   };
 
   /**
@@ -161,28 +294,6 @@
   };
 
   /**
-   * Handle device selection
-   */
-  const handleDeviceSelect = (event: Event) => {
-    const target = event.target as HTMLSelectElement;
-    const deviceId = target.value;
-    if (deviceId && audiotoolController) {
-      audiotoolController.selectDevice(deviceId);
-    }
-  };
-
-  /**
-   * Handle parameter selection
-   */
-  const handleParameterSelect = (event: Event) => {
-    const target = event.target as HTMLSelectElement;
-    const paramName = target.value;
-    if (paramName && audiotoolController) {
-      audiotoolController.selectParameter(paramName);
-    }
-  };
-
-  /**
    * Handle hand tracking results each frame
    */
   const handleHandTracking = async (result: HandTrackingResult) => {
@@ -196,19 +307,69 @@
     // Update hands detected count
     handsDetected = result.hands.length;
 
-    // Process hand angle and send to Audiotool
-    if (result.hands.length > 0) {
-      const hand = result.hands[0];
-      const tilt = getHandTilt(hand.landmarks);
-      currentHandAngle = tilt;
+    // Find left and right hands
+    const leftHand = result.hands.find((h) => h.handedness === "Left");
+    const rightHand = result.hands.find((h) => h.handedness === "Right");
 
-      // Send to Audiotool if connected and parameter selected
-      if (
-        audiotoolController?.connected &&
-        audiotoolController.selectedDeviceId &&
-        audiotoolController.selectedParameterName
-      ) {
-        await audiotoolController.setSelectedParameter(tilt);
+    // Extract values from left hand
+    if (leftHand) {
+      const values = extractHandValues(leftHand, "Left");
+      const leftPinchSource = controlSources.find(
+        (s) => s.id === "leftPinchDistance"
+      );
+      const leftThumbXSource = controlSources.find(
+        (s) => s.id === "leftThumbX"
+      );
+      const leftThumbYSource = controlSources.find(
+        (s) => s.id === "leftThumbY"
+      );
+      const leftAngleSource = controlSources.find(
+        (s) => s.id === "leftPinchAngle"
+      );
+
+      if (leftPinchSource) leftPinchSource.value = values.pinchDistance;
+      if (leftThumbXSource) leftThumbXSource.value = values.thumbX;
+      if (leftThumbYSource) leftThumbYSource.value = values.thumbY;
+      if (leftAngleSource) leftAngleSource.value = values.pinchAngle;
+    }
+
+    // Extract values from right hand
+    if (rightHand) {
+      const values = extractHandValues(rightHand, "Right");
+      const rightPinchSource = controlSources.find(
+        (s) => s.id === "rightPinchDistance"
+      );
+      const rightThumbXSource = controlSources.find(
+        (s) => s.id === "rightThumbX"
+      );
+      const rightThumbYSource = controlSources.find(
+        (s) => s.id === "rightThumbY"
+      );
+      const rightAngleSource = controlSources.find(
+        (s) => s.id === "rightPinchAngle"
+      );
+
+      if (rightPinchSource) rightPinchSource.value = values.pinchDistance;
+      if (rightThumbXSource) rightThumbXSource.value = values.thumbX;
+      if (rightThumbYSource) rightThumbYSource.value = values.thumbY;
+      if (rightAngleSource) rightAngleSource.value = values.pinchAngle;
+    }
+
+    // Update legacy currentHandAngle for backward compatibility
+    if (result.hands.length > 0) {
+      currentHandAngle = getHandTilt(result.hands[0].landmarks);
+    }
+
+    // Send values to Audiotool for all mapped control sources
+    if (audiotoolController?.connected) {
+      for (const source of controlSources) {
+        if (source.deviceId && source.parameterName) {
+          await audiotoolController.setParameter(
+            source.deviceId,
+            source.parameterName,
+            source.value
+          );
+        }
       }
     }
 
@@ -359,11 +520,11 @@
       </div>
     {/if}
 
-    <!-- Device Control Panel (shown when connected) -->
+    <!-- Control Sources Panel (shown when connected) -->
     {#if isInitialized && audiotoolController?.connectionState === "connected"}
       <div class="control-panel panel">
         <div class="panel-header">
-          <h3>Device Control</h3>
+          <h3>Control Mappings</h3>
           <button
             class="icon-button disconnect"
             onclick={disconnectFromAudiotool}
@@ -372,69 +533,64 @@
           </button>
         </div>
 
-        <div class="form-group">
-          <label for="device-select">Device</label>
-          <select
-            id="device-select"
-            class="select-input"
-            onchange={handleDeviceSelect}
-            value={audiotoolController.selectedDeviceId ?? ""}
-          >
-            <option value="" disabled>Select a device...</option>
-            {#each audiotoolController.devices as device}
-              <option value={device.id}>{device.name}</option>
-            {/each}
-          </select>
+        <div class="control-sources-list">
+          {#each controlSources as source (source.id)}
+            <div class="control-source-item">
+              <div class="control-source-header">
+                <span class="control-source-label">{source.label}</span>
+                <span class="control-source-value"
+                  >{(source.value * 100).toFixed(0)}%</span
+                >
+              </div>
+
+              <div class="control-source-bar">
+                <div
+                  class="control-source-fill"
+                  style="width: {source.value * 100}%"
+                ></div>
+              </div>
+
+              <div class="control-source-mapping">
+                <select
+                  class="select-input compact"
+                  value={source.deviceId ?? ""}
+                  onchange={(e) =>
+                    updateControlSourceDevice(
+                      source.id,
+                      (e.target as HTMLSelectElement).value
+                    )}
+                >
+                  <option value="">No device</option>
+                  {#each audiotoolController.devices as device}
+                    <option value={device.id}>{device.name}</option>
+                  {/each}
+                </select>
+
+                {#if source.deviceId}
+                  <select
+                    class="select-input compact"
+                    value={source.parameterName ?? ""}
+                    onchange={(e) =>
+                      updateControlSourceParameter(
+                        source.id,
+                        (e.target as HTMLSelectElement).value
+                      )}
+                  >
+                    <option value="">No param</option>
+                    {#each getDeviceParameters(source.deviceId) as param}
+                      <option value={param}>{param}</option>
+                    {/each}
+                  </select>
+                {/if}
+              </div>
+            </div>
+          {/each}
         </div>
-
-        {#if audiotoolController.selectedDeviceId}
-          <div class="form-group">
-            <label for="param-select">Parameter</label>
-            <select
-              id="param-select"
-              class="select-input"
-              onchange={handleParameterSelect}
-              value={audiotoolController.selectedParameterName ?? ""}
-            >
-              <option value="" disabled>Select a parameter...</option>
-              {#each getSelectedDeviceParameters() as param}
-                <option value={param}>{param}</option>
-              {/each}
-            </select>
-          </div>
-        {/if}
-
-        {#if audiotoolController.selectedParameterName}
-          <div class="control-active">
-            <div class="control-info">
-              <span class="control-label"
-                >Hand Tilt → {audiotoolController.selectedParameterName}</span
-              >
-              <span class="control-value"
-                >{(currentHandAngle * 100).toFixed(0)}%</span
-              >
-            </div>
-            <div class="control-bar">
-              <div
-                class="control-fill"
-                style="width: {currentHandAngle * 100}%"
-              ></div>
-              <div
-                class="control-indicator"
-                style="left: {currentHandAngle * 100}%"
-              ></div>
-            </div>
-          </div>
-        {/if}
 
         <div class="gesture-hint">
-          <p>Tilt your hand up/down to control the parameter</p>
+          <p>Use both hands to control multiple parameters</p>
         </div>
       </div>
-
-      <button onclick={() => audiotoolController?.createPulverisateur()}
-        >Make Pulverisateur</button
-      >
     {/if}
 
     <!-- Stats Panel -->
@@ -710,16 +866,6 @@
     color: var(--color-text-tertiary);
   }
 
-  .help-link {
-    font-size: 0.75rem;
-    color: var(--color-cyan);
-    text-decoration: none;
-  }
-
-  .help-link:hover {
-    text-decoration: underline;
-  }
-
   .connect-button {
     width: 100%;
     padding: var(--space-md);
@@ -733,7 +879,7 @@
     left: var(--space-lg);
     top: 50%;
     transform: translateY(-50%);
-    width: 280px;
+    width: 320px;
   }
 
   .panel-header {
@@ -768,60 +914,6 @@
     color: var(--color-red);
   }
 
-  .control-active {
-    margin-top: var(--space-lg);
-    padding: var(--space-md);
-    background: var(--color-bg-tertiary);
-    border-radius: var(--radius-md);
-  }
-
-  .control-info {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: var(--space-sm);
-  }
-
-  .control-label {
-    font-size: 0.75rem;
-    color: var(--color-magenta);
-    font-family: var(--font-mono);
-  }
-
-  .control-value {
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    font-weight: 700;
-    color: var(--color-cyan);
-  }
-
-  .control-bar {
-    position: relative;
-    height: 8px;
-    background: var(--color-bg);
-    border-radius: 4px;
-    overflow: visible;
-  }
-
-  .control-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--color-cyan), var(--color-magenta));
-    border-radius: 4px;
-    transition: width 0.05s ease-out;
-  }
-
-  .control-indicator {
-    position: absolute;
-    top: 50%;
-    width: 16px;
-    height: 16px;
-    background: white;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-    box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-    transition: left 0.05s ease-out;
-  }
-
   .gesture-hint {
     margin-top: var(--space-lg);
     text-align: center;
@@ -830,6 +922,85 @@
   .gesture-hint p {
     font-size: 0.75rem;
     color: var(--color-text-secondary);
+  }
+
+  /* Control Sources List */
+  .control-sources-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    max-height: 60vh;
+    overflow-y: auto;
+    padding-right: var(--space-xs);
+  }
+
+  .control-sources-list::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .control-sources-list::-webkit-scrollbar-track {
+    background: var(--color-bg-tertiary);
+    border-radius: 2px;
+  }
+
+  .control-sources-list::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 2px;
+  }
+
+  .control-source-item {
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .control-source-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .control-source-label {
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    color: var(--color-magenta);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .control-source-value {
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--color-cyan);
+  }
+
+  .control-source-bar {
+    height: 4px;
+    background: var(--color-bg);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .control-source-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-cyan), var(--color-magenta));
+    transition: width 0.05s ease-out;
+  }
+
+  .control-source-mapping {
+    display: flex;
+    gap: var(--space-xs);
+  }
+
+  .select-input.compact {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.7rem;
+    flex: 1;
+    min-width: 0;
   }
 
   /* Stats Panel */
@@ -932,8 +1103,13 @@
 
     .control-panel {
       left: var(--space-md);
-      width: 240px;
+      width: calc(100vw - var(--space-md) * 2);
+      max-width: 300px;
       padding: var(--space-md);
+    }
+
+    .control-sources-list {
+      max-height: 40vh;
     }
 
     .stats-panel {

@@ -439,7 +439,16 @@ export class AudiotoolController {
     const device = this._devicesMap.get(deviceId);
     if (!device) return;
 
-    const mappedValue = this.mapParameterValue(paramName, clampedValue);
+    // Get the parameter to access its actual min/max range
+    const param = device.parameters.get(paramName);
+    if (!param) return;
+
+    const mappedValue = this.mapToRange(
+      clampedValue,
+      param.min ?? 0,
+      param.max ?? 1,
+      paramName
+    );
 
     // Use document.modify() to update parameters
     await this.#document.modify((t: SafeTransactionBuilder) => {
@@ -452,64 +461,33 @@ export class AudiotoolController {
 
       t.update(field, mappedValue);
     });
-    console.log(`[Audiotool] Set parameter ${paramName} to ${mappedValue}`);
 
     // Update local cache
-    const param = device.parameters.get(paramName);
-    if (param) {
-      param.value = mappedValue;
-    }
+    param.value = mappedValue;
   }
 
   /**
-   * Map normalized 0-1 value to parameter range
+   * Map normalized 0-1 value to actual parameter range
+   * Uses logarithmic scaling for frequency parameters
    */
-  private mapParameterValue(
-    paramName: string,
-    normalizedValue: number
+  private mapToRange(
+    normalizedValue: number,
+    min: number,
+    max: number,
+    paramName: string
   ): number {
     const lowerName = paramName.toLowerCase();
 
+    // Use logarithmic mapping for frequency parameters (sounds more natural)
     if (lowerName.includes("frequency") || lowerName.includes("cutoff")) {
-      return 20 * Math.pow(1000, normalizedValue); // 20Hz to 20kHz
-    }
-    if (lowerName.includes("resonance") || lowerName.includes("factor")) {
-      return normalizedValue;
-    }
-    if (
-      lowerName.includes("gain") ||
-      lowerName.includes("boost") ||
-      lowerName.includes("level")
-    ) {
-      return normalizedValue * 2;
-    }
-    if (
-      lowerName.includes("time") ||
-      lowerName.includes("delay") ||
-      lowerName.includes("attack") ||
-      lowerName.includes("decay") ||
-      lowerName.includes("release")
-    ) {
-      return normalizedValue * 2;
-    }
-    if (lowerName.includes("mix") || lowerName.includes("wet")) {
-      return normalizedValue;
-    }
-    if (lowerName.includes("feedback")) {
-      return normalizedValue * 0.95;
-    }
-    if (
-      lowerName.includes("mode") ||
-      lowerName.includes("type") ||
-      lowerName.includes("index")
-    ) {
-      return Math.floor(normalizedValue * 4);
-    }
-    if (lowerName.includes("drive")) {
-      return normalizedValue * 10;
+      // Logarithmic interpolation: min * (max/min)^normalizedValue
+      const logMin = Math.log(min);
+      const logMax = Math.log(max);
+      return Math.exp(logMin + normalizedValue * (logMax - logMin));
     }
 
-    return normalizedValue;
+    // Linear mapping for all other parameters
+    return min + normalizedValue * (max - min);
   }
 
   /**
