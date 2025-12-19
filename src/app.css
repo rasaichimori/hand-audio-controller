@@ -4,9 +4,6 @@
  * A dark, cyberpunk-inspired aesthetic with neon accents.
  */
 
-/* Load fonts - must be first */
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
-
 /* CSS Reset */
 *,
 *::before,
@@ -23,20 +20,13 @@
 	--color-bg-secondary: #212121;
 	--color-bg-tertiary: #4b4b4b;
 	--color-bg-overlay: rgba(10, 10, 15, 0.85);
-
-	--color-magenta: #ff00ff;
-	--color-yellow: #ffff00;
-	--color-green: #00ff88;
-	--color-orange: #ff6600;
-	--color-red: #ff3366;
-
 	--color-text-primary: #e0e0e0;
 	--color-text-secondary: #939393;
 
-	/* Typography - Monospace only */
-	--font-display: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-	--font-body: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-	--font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+	/* Typography - Mac Terminal (Menlo) */
+	--font-display: 'Menlo', 'Monaco', 'Courier New', 'Consolas', monospace;
+	--font-body: 'Menlo', 'Monaco', 'Courier New', 'Consolas', monospace;
+	--font-mono: 'Menlo', 'Monaco', 'Courier New', 'Consolas', monospace;
 
 	/* Spacing */
 	--space-xs: 4px;
@@ -140,9 +130,7 @@ button.primary {
 /* Panels */
 .panel {
 	background: var(--color-bg-overlay);
-	border: var(--border-width) solid var(--border-color);
-	padding: var(--space-lg);
-	backdrop-filter: blur(10px);
+	padding: var(--space-xs);
 }
 
 /* Inputs */
@@ -208,7 +196,8 @@ input[type="range"]::-moz-range-thumb {
 
 /* Selection */
 ::selection {
-	color: var(--color-bg-primary);
+	background-color: rgba(255, 255, 255, 0.3);
+	color: var(--color-text-primary);
 }
 
 /* Focus styles */

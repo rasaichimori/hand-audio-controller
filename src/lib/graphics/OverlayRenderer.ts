@@ -10,7 +10,6 @@
 
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
 import {
-  getHandOpenness,
   getPinchDistance,
   landmarkToPixel,
 } from "../hand-tracking/landmarkUtils.js";
@@ -64,7 +63,6 @@ export class OverlayRenderer {
   private palmGraphics: Graphics;
   private landmarkGraphics: Graphics;
   private pinchGraphics: Graphics;
-  private opennessGraphics: Graphics;
   private pinchDistanceGraphics: Graphics;
 
   // Per-hand text containers (for distance and angle display)
@@ -87,7 +85,6 @@ export class OverlayRenderer {
     this.palmGraphics = new Graphics();
     this.landmarkGraphics = new Graphics();
     this.pinchGraphics = new Graphics();
-    this.opennessGraphics = new Graphics();
     this.pinchDistanceGraphics = new Graphics();
 
     // Create text style for labels
@@ -145,7 +142,6 @@ export class OverlayRenderer {
     this.handContainer.addChild(this.palmGraphics);
     this.handContainer.addChild(this.landmarkGraphics);
 
-    this.effectsContainer.addChild(this.opennessGraphics);
     this.effectsContainer.addChild(this.pinchGraphics);
     this.effectsContainer.addChild(this.pinchDistanceGraphics);
 
@@ -182,7 +178,6 @@ export class OverlayRenderer {
     this.palmGraphics.clear();
     this.landmarkGraphics.clear();
     this.pinchGraphics.clear();
-    this.opennessGraphics.clear();
     this.pinchDistanceGraphics.clear();
 
     // Clear per-hand text and backgrounds
@@ -243,6 +238,7 @@ export class OverlayRenderer {
       color,
       cap: "round",
       join: "round",
+      alpha: 0.1,
     });
 
     // Draw finger connections
@@ -297,9 +293,14 @@ export class OverlayRenderer {
 
       // Draw filled circle
       this.landmarkGraphics.circle(pixel.x, pixel.y, radius);
-    }
 
-    this.landmarkGraphics.fill({ color });
+      // Set alpha to 1 for thumb tip and index tip, 0.1 for others
+      const alpha =
+        i === LandmarkIndex.THUMB_TIP || i === LandmarkIndex.INDEX_TIP
+          ? 1
+          : 0.1;
+      this.landmarkGraphics.fill({ color, alpha });
+    }
   }
 
   /**
@@ -307,7 +308,6 @@ export class OverlayRenderer {
    */
   private renderReactiveEffects(result: HandTrackingResult): void {
     result.hands.forEach((hand, index) => {
-      const openness = getHandOpenness(hand.landmarks);
       const pinchDistance = getPinchDistance(hand.landmarks);
 
       // Always show pinch distance line, label, and angle
@@ -317,9 +317,6 @@ export class OverlayRenderer {
       if (pinchDistance < 0.08) {
         this.renderPinchEffect(hand);
       }
-
-      // Hand openness ring
-      this.renderOpennessRing(hand, openness, index);
     });
   }
 
@@ -483,45 +480,6 @@ export class OverlayRenderer {
     this.pinchGraphics.circle(pinchX, pinchY, 5);
     this.pinchGraphics.fill({ color: this.theme.accentColor });
   }
-
-  /**
-   * Render openness indicator ring around hand
-   */
-  private renderOpennessRing(
-    hand: HandResult,
-    openness: number,
-    handIndex: number
-  ): void {
-    const width = this.app.screen.width;
-    const height = this.app.screen.height;
-
-    // Get wrist position as ring center
-    const wrist = landmarkToPixel(
-      hand.landmarks[LandmarkIndex.WRIST],
-      width,
-      height,
-      this.mirror
-    );
-
-    // Ring radius based on openness
-    const radius = 30 + openness * 150;
-    const color =
-      handIndex === 0 ? this.theme.primaryColor : this.theme.secondaryColor;
-
-    // Draw arc based on openness (more open = fuller arc)
-    const arcLength = Math.PI * 2 * Math.min(openness * 3, 1);
-    const startAngle = -Math.PI / 2 - arcLength / 2;
-    const endAngle = startAngle + arcLength;
-
-    // Draw arc
-    this.opennessGraphics.arc(wrist.x, wrist.y, radius, startAngle, endAngle);
-    this.opennessGraphics.stroke({
-      width: 4,
-      color,
-      alpha: 0.4,
-    });
-  }
-
   /**
    * Resize canvas to match video dimensions
    */
